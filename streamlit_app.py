@@ -10,21 +10,40 @@ st.set_page_config(
 import numpy as np
 import pandas as pd
 import re
+import sys
 
-# Try to import matplotlib with error handling
+# Initialize dependency status tracking
+MATPLOTLIB_AVAILABLE = False
+SCIPY_AVAILABLE = False
+
+# Define version strings for better error reporting
+MATPLOTLIB_VERSION = "3.5.3"
+SCIPY_VERSION = "1.9.3"
+
+# Try to import matplotlib with expanded error handling
 try:
+    import matplotlib
     import matplotlib.pyplot as plt
     MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
-    st.error("Could not import matplotlib. Some features will be limited. Error details have been recorded in the logs.")
+except ImportError as e:
+    st.error(f"Could not import matplotlib {MATPLOTLIB_VERSION}. Some features will be limited. Error: {str(e)}")
+    # Try a different approach if available
+    try:
+        # Force matplotlib to use a different backend
+        import matplotlib
+        matplotlib.use('Agg')  # Try the Agg backend which has fewer dependencies
+        import matplotlib.pyplot as plt
+        MATPLOTLIB_AVAILABLE = True
+        st.warning("Using alternative matplotlib configuration. Some features may be limited.")
+    except ImportError:
+        pass
 
+# Try to import scipy with expanded error handling
 try:
     from scipy.signal import savgol_filter
     SCIPY_AVAILABLE = True
-except ImportError:
-    SCIPY_AVAILABLE = False
-    st.error("Could not import scipy. Smoothing features will be disabled.")
+except ImportError as e:
+    st.error(f"Could not import scipy {SCIPY_VERSION}. Smoothing features will be disabled. Error: {str(e)}")
 
 # Import scienceplots for publication-quality plots (wrapped in a function to avoid startup delay)
 @st.cache_resource
@@ -32,7 +51,8 @@ def load_optional_dependencies():
     try:
         import scienceplots
         return {"scienceplots": scienceplots}
-    except ImportError:
+    except ImportError as e:
+        st.warning(f"Could not import scienceplots. Publication-quality plotting will be disabled. Error: {str(e)}")
         return {"scienceplots": None}
 
 # Call this only when needed rather than at startup
@@ -41,25 +61,30 @@ deps = {"scienceplots_loaded": False, "modules": None}
 st.title("XRD Data Plotter")
 st.write("Upload XRD files to visualize, compare, and analyze X-ray diffraction patterns")
 
-# Display dependencies status
-with st.expander("System Information", expanded=False):
+# Display dependencies status in a more user-friendly way
+with st.expander("System Information", expanded=True):
     st.write("## Dependencies Status")
-    st.write(f"- Matplotlib: {'Available ✅' if MATPLOTLIB_AVAILABLE else 'Not Available ❌'}")
-    st.write(f"- SciPy: {'Available ✅' if SCIPY_AVAILABLE else 'Not Available ❌'}")
     
-    # Print Python version
-    import sys
-    st.write(f"- Python version: {sys.version}")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.write("### Core Dependencies")
+        st.write(f"- Matplotlib: {'Available ✅' if MATPLOTLIB_AVAILABLE else 'Not Available ❌'}")
+        st.write(f"- SciPy: {'Available ✅' if SCIPY_AVAILABLE else 'Not Available ❌'}")
+        st.write(f"- NumPy: Available ✅ ({np.__version__})")
+        st.write(f"- Pandas: Available ✅ ({pd.__version__})")
     
-    # Print package versions
-    st.write("## Package Versions")
-    st.write(f"- NumPy: {np.__version__}")
-    st.write(f"- Pandas: {pd.__version__}")
-    if MATPLOTLIB_AVAILABLE:
-        st.write(f"- Matplotlib: {plt.__version__}")
-    if SCIPY_AVAILABLE:
-        import scipy
-        st.write(f"- SciPy: {scipy.__version__}")
+    with col2:
+        st.write("### System Information")
+        st.write(f"- Python version: {sys.version}")
+        st.write(f"- Platform: {sys.platform}")
+        
+        if not MATPLOTLIB_AVAILABLE or not SCIPY_AVAILABLE:
+            st.write("### Troubleshooting")
+            st.info("Some dependencies are missing. The app will still work with limited functionality.")
+            if not MATPLOTLIB_AVAILABLE:
+                st.info("Without matplotlib, plotting features will be disabled, but data processing will still work.")
+            if not SCIPY_AVAILABLE:
+                st.info("Without scipy, smoothing features will be disabled, but other features will work normally.")
 
 # Function to read XRD data
 def read_xrd_data(file):
