@@ -6,17 +6,23 @@ import pandas as pd
 from io import StringIO
 import re
 
+# Set page title and favicon
+st.set_page_config(
+    page_title="XRD Plotter",
+    page_icon="📊",
+    layout="wide"
+)
+
 # Import scienceplots for publication-quality plots
 try:
     import scienceplots
     HAS_SCIENCEPLOTS = True
 except ImportError:
     HAS_SCIENCEPLOTS = False
-    st.warning("scienceplots not found. Please install with: pip install scienceplots")
-
-st.set_page_config(page_title="XRD Plotter", layout="wide")
+    st.warning("The scienceplots package is not installed. Publication quality plotting will be disabled. If you're running this locally, install with: pip install scienceplots")
 
 st.title("XRD Data Plotter")
+st.write("Upload XRD files to visualize, compare, and analyze X-ray diffraction patterns")
 
 # Function to read XRD data
 def read_xrd_data(file):
@@ -151,19 +157,26 @@ if uploaded_files:
         else:
             use_publication_style = False
             use_latex = False
-            st.warning("scienceplots package not found. Install with: pip install scienceplots")
+            st.info("Publication quality plotting is disabled. Install scienceplots for this feature.")
     
     # Set up the figure with the selected style
     if HAS_SCIENCEPLOTS and use_publication_style:
-        plt.style.use(['science', science_style])
+        try:
+            plt.style.use(['science', science_style])
+        except:
+            st.warning("Could not apply science style. Using default style instead.")
         
         # Configure matplotlib to use LaTeX if requested
         if use_latex:
-            plt.rcParams.update({
-                "text.usetex": True,
-                "font.family": "serif",
-                "font.serif": ["Computer Modern Roman"],
-            })
+            try:
+                plt.rcParams.update({
+                    "text.usetex": True,
+                    "font.family": "serif",
+                    "font.serif": ["Computer Modern Roman"],
+                })
+            except:
+                st.warning("LaTeX configuration failed. Using default text rendering.")
+                use_latex = False
     
     # Create figure
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -429,4 +442,31 @@ if uploaded_files:
                     mime="text/csv"
                 )
 else:
-    st.info("Please upload XRD data files to begin plotting.") 
+    st.info("Please upload XRD data files to begin plotting.")
+    
+    # Add example/tutorial area
+    with st.expander("How to use this app", expanded=True):
+        st.markdown("""
+        ### XRD Plotter Usage Guide
+        
+        1. **Upload Files**: Use the file uploader to select one or more XRD data files (.txt, .csv, .dat, or .xy formats)
+        2. **Adjust Settings**: Each file has its own control panel where you can:
+           - Normalize the data
+           - Apply smoothing
+           - Add a vertical offset
+           - Change the color
+           - Position labels precisely where you want them
+        3. **Global Settings**: Use the sidebar to control:
+           - 2θ range to display
+           - Legend position and visibility
+           - Publication-quality styling
+        4. **Export**: Save your processed data or download publication-ready figures
+        
+        Try it now by uploading your XRD data files!
+        """)
+        
+# Add footer with attribution
+st.markdown("""
+---
+Made with [Streamlit](https://streamlit.io) • [GitHub Repository](https://github.com/jrjfonseca/XRD_PLOTTER)
+""") 
