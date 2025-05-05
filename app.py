@@ -82,6 +82,13 @@ def normalize_data(y_data):
 uploaded_files = st.file_uploader("Upload XRD files", accept_multiple_files=True, type=['txt', 'csv', 'dat', 'xy'])
 
 if uploaded_files:
+    # Initialize variables for plot settings
+    use_latex = False
+    use_publication_style = False
+    science_style = "science"
+    legend_position = "best"
+    legend_bbox_to_anchor = None
+    
     # Create sidebar for global settings
     with st.sidebar:
         st.header("Global Settings")
