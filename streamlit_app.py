@@ -1,7 +1,21 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
-from scipy.signal import savgol_filter
+
+# Try to import matplotlib with error handling
+try:
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    st.error("Could not import matplotlib. Some features will be limited. Error details have been recorded in the logs.")
+
+try:
+    from scipy.signal import savgol_filter
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+    st.error("Could not import scipy. Smoothing features will be disabled.")
+
 import pandas as pd
 import re
 
@@ -26,6 +40,26 @@ deps = {"scienceplots_loaded": False, "modules": None}
 
 st.title("XRD Data Plotter")
 st.write("Upload XRD files to visualize, compare, and analyze X-ray diffraction patterns")
+
+# Display dependencies status
+with st.expander("System Information", expanded=False):
+    st.write("## Dependencies Status")
+    st.write(f"- Matplotlib: {'Available ✅' if MATPLOTLIB_AVAILABLE else 'Not Available ❌'}")
+    st.write(f"- SciPy: {'Available ✅' if SCIPY_AVAILABLE else 'Not Available ❌'}")
+    
+    # Print Python version
+    import sys
+    st.write(f"- Python version: {sys.version}")
+    
+    # Print package versions
+    st.write("## Package Versions")
+    st.write(f"- NumPy: {np.__version__}")
+    st.write(f"- Pandas: {pd.__version__}")
+    if MATPLOTLIB_AVAILABLE:
+        st.write(f"- Matplotlib: {plt.__version__}")
+    if SCIPY_AVAILABLE:
+        import scipy
+        st.write(f"- SciPy: {scipy.__version__}")
 
 # Function to read XRD data
 def read_xrd_data(file):
@@ -90,7 +124,30 @@ def normalize_data(y_data):
 # File uploader - now including .xy format
 uploaded_files = st.file_uploader("Upload XRD files", accept_multiple_files=True, type=['txt', 'csv', 'dat', 'xy'])
 
-if uploaded_files:
+if not MATPLOTLIB_AVAILABLE:
+    st.warning("Plotting is disabled due to missing matplotlib dependency. You can still upload and process data.")
+    
+    if uploaded_files:
+        st.write("## Data Preview")
+        for i, file in enumerate(uploaded_files):
+            x_data, y_data = read_xrd_data(file)
+            if x_data is not None and y_data is not None:
+                df = pd.DataFrame({
+                    '2θ': x_data,
+                    'Intensity': y_data
+                })
+                st.write(f"### {file.name}")
+                st.dataframe(df.head(10))
+                
+                # Export data
+                st.download_button(
+                    label=f"Download {file.name} data",
+                    data=df.to_csv(index=False),
+                    file_name=f"{file.name}.csv",
+                    mime="text/csv"
+                )
+    
+elif uploaded_files:
     # Initialize variables for plot settings
     use_latex = False
     use_publication_style = False
@@ -226,7 +283,7 @@ if uploaded_files:
                 color = st.color_picker("Color", key=f"color_{i}")
                 
                 # Apply smoothing if requested
-                if st.checkbox("Apply smoothing", key=f"smooth_{i}"):
+                if SCIPY_AVAILABLE and st.checkbox("Apply smoothing", key=f"smooth_{i}"):
                     window = st.slider("Smoothing window", 3, 51, 5, 2, key=f"window_{i}")
                     # Apply smoothing to a copy of the data to avoid modifying the original
                     y_data_processed = savgol_filter(y_data.copy(), window, 2)
