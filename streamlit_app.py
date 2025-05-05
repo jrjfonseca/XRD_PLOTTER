@@ -62,7 +62,7 @@ def load_scienceplots():
         return {"scienceplots": None}
 
 # Fallback plotting function using HTML/CSS when matplotlib is not available
-def create_basic_plot_html(x_data, y_data, labels, colors, title="XRD Data"):
+def create_basic_plot_html(x_data, y_data, labels, colors, label_positions=None, title="XRD Data"):
     """Create a basic plot using HTML/CSS when matplotlib is not available"""
     html = f"""
     <style>
@@ -139,6 +139,16 @@ def create_basic_plot_html(x_data, y_data, labels, colors, title="XRD Data"):
         height: 3px;
         margin-right: 5px;
     }}
+    .data-label {{
+        position: absolute;
+        font-weight: bold;
+        white-space: nowrap;
+        transform: translate(-50%, -100%);
+        background-color: rgba(255, 255, 255, 0.7);
+        padding: 2px 5px;
+        border-radius: 3px;
+        border: 1px solid #ddd;
+    }}
     </style>
     
     <div class="plot-container">
@@ -181,6 +191,17 @@ def create_basic_plot_html(x_data, y_data, labels, colors, title="XRD Data"):
                     <div>{label}</div>
                 </div>
                 """
+                
+                # Add custom labels if provided
+                if label_positions and i < len(label_positions) and label_positions[i]['show']:
+                    x_pos_label = 50 + ((label_positions[i]['x'] - x_min) / x_range) * (100 - 70)
+                    y_pos_label = 50 + 300 - ((label_positions[i]['y'] - y_min) / y_range) * 300
+                    
+                    html += f"""
+                    <div class="data-label" style="left: {x_pos_label}%; top: {y_pos_label}px; color: {color};">
+                        {label_positions[i]['text']}
+                    </div>
+                    """
         
         legend_html += '</div>'
         html += legend_html
@@ -294,6 +315,7 @@ if uploaded_files:
     all_processed_data = []
     all_labels = []
     all_colors = []
+    all_label_positions = []
     
     # Global settings for fallback HTML plot
     min_x_all = float('inf')
@@ -377,6 +399,82 @@ if uploaded_files:
                 # Apply offset AFTER all other processing
                 y_data_processed = y_data_processed + y_offset
                 
+                # Add label positioning controls on right side of the plot
+                st.subheader("Label Position")
+                show_label = st.checkbox("Show label on plot", value=True, key=f"show_label_{i}")
+                
+                if show_label:
+                    # Get data within the visible range for default positioning
+                    if use_custom_range:
+                        mask = (x_data >= min_theta) & (x_data <= max_theta)
+                        x_range = x_data[mask] if any(mask) else x_data
+                        y_range = y_data_processed[mask] if any(mask) else y_data_processed
+                        if len(x_range) > 0:
+                            max_x = max_theta - (max_theta - min_theta) * 0.05  # 95% of the way to the right edge
+                        else:
+                            max_x = max_theta
+                    else:
+                        if len(x_data) > 0:
+                            x_max = np.max(x_data)
+                            x_min = np.min(x_data)
+                            max_x = x_max - (x_max - x_min) * 0.05  # 95% of the way to the right edge
+                        else:
+                            max_x = 0
+                    
+                    # Get the y-value at this x position or nearby
+                    if len(x_data) > 0 and len(y_data_processed) > 0:
+                        # Find the closest x-value to our desired position
+                        if use_custom_range:
+                            mask = (x_data >= min_theta) & (x_data <= max_theta)
+                            x_visible = x_data[mask] if any(mask) else x_data
+                            y_visible = y_data_processed[mask] if any(mask) else y_data_processed
+                        else:
+                            x_visible = x_data
+                            y_visible = y_data_processed
+                            
+                        if len(x_visible) > 0:
+                            # Find nearest x-value to our desired position
+                            nearest_idx = np.abs(x_visible - max_x).argmin()
+                            default_y = y_visible[nearest_idx]
+                        else:
+                            default_y = 0
+                    else:
+                        default_y = 0
+                    
+                    # Create columns for X and Y positioning
+                    label_col1, label_col2 = st.columns(2)
+                    
+                    with label_col1:
+                        x_pos = st.number_input(
+                            "X Position", 
+                            value=float(max_x),
+                            min_value=float(min_theta) if use_custom_range else float(np.min(x_data)) if len(x_data) > 0 else 0.0,
+                            max_value=float(max_theta) if use_custom_range else float(np.max(x_data)) if len(x_data) > 0 else 100.0,
+                            key=f"label_x_{i}"
+                        )
+                    
+                    with label_col2:
+                        y_pos = st.number_input(
+                            "Y Position", 
+                            value=float(default_y),
+                            key=f"label_y_{i}"
+                        )
+                    
+                    # Store the label information
+                    all_label_positions.append({
+                        'x': x_pos,
+                        'y': y_pos,
+                        'text': label,
+                        'color': color,
+                        'show': True
+                    })
+                else:
+                    all_label_positions.append({
+                        'show': False,
+                        'text': label,
+                        'color': color
+                    })
+                
                 # Store processed data for potential export
                 all_processed_data.append({
                     'x': x_data,
@@ -407,8 +505,8 @@ if uploaded_files:
             x_data_list.append(x_plot)
             y_data_list.append(y_plot)
         
-        # Create HTML plot
-        html_plot = create_basic_plot_html(x_data_list, y_data_list, all_labels, all_colors)
+        # Create HTML plot with custom labels
+        html_plot = create_basic_plot_html(x_data_list, y_data_list, all_labels, all_colors, all_label_positions)
         st.components.v1.html(html_plot, height=500)
         
         # Export options
@@ -508,6 +606,19 @@ if uploaded_files:
             # Plot the data
             ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
         
+        # Add custom positioned labels to the plot
+        for label_info in all_label_positions:
+            if label_info['show']:
+                ax.text(
+                    label_info['x'], 
+                    label_info['y'], 
+                    label_info['text'],
+                    color=label_info['color'],
+                    ha='right',  # Right-align the text
+                    va='center',  # Vertically center the text
+                    fontweight='bold'
+                )
+        
         # Customize plot - use LaTeX-compatible theta character for the x-axis label
         if use_latex:
             ax.set_xlabel(r"$2\theta$ (degrees)")
@@ -555,6 +666,19 @@ if uploaded_files:
                         y_plot = data['y']
                     
                     save_ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
+                
+                # Add custom positioned labels to the saved plot
+                for label_info in all_label_positions:
+                    if label_info['show']:
+                        save_ax.text(
+                            label_info['x'], 
+                            label_info['y'], 
+                            label_info['text'],
+                            color=label_info['color'],
+                            ha='right',  # Right-align the text
+                            va='center',  # Vertically center the text
+                            fontweight='bold'
+                        )
                 
                 # Use LaTeX-compatible theta character for the x-axis label in the saved figure
                 if use_latex:
