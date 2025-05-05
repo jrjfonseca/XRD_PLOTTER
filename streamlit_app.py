@@ -1,5 +1,15 @@
 import streamlit as st
+
+# Set page title and favicon - MUST be the first Streamlit command
+st.set_page_config(
+    page_title="XRD Plotter",
+    page_icon="📊",
+    layout="wide"
+)
+
 import numpy as np
+import pandas as pd
+import re
 
 # Try to import matplotlib with error handling
 try:
@@ -15,16 +25,6 @@ try:
 except ImportError:
     SCIPY_AVAILABLE = False
     st.error("Could not import scipy. Smoothing features will be disabled.")
-
-import pandas as pd
-import re
-
-# Set page title and favicon
-st.set_page_config(
-    page_title="XRD Plotter",
-    page_icon="📊",
-    layout="wide"
-)
 
 # Import scienceplots for publication-quality plots (wrapped in a function to avoid startup delay)
 @st.cache_resource
