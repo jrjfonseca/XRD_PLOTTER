@@ -13,33 +13,65 @@ st.title("XRD Data Plotter")
 # Function to read XRD data
 def read_xrd_data(file):
     try:
-        # Try to read as CSV first
+        # Get file extension
+        file_name = file.name.lower()
+        
+        # Handle .xy files specifically (typically space or tab-separated two-column data)
+        if file_name.endswith('.xy'):
+            content = file.getvalue().decode('utf-8')
+            lines = content.split('\n')
+            x_data = []
+            y_data = []
+            for line in lines:
+                # Skip comment lines and empty lines
+                if line.strip() and not line.strip().startswith('#'):
+                    # Try to parse space or tab-separated values
+                    fields = re.split(r'\s+', line.strip())
+                    if len(fields) >= 2:
+                        try:
+                            x = float(fields[0])
+                            y = float(fields[1])
+                            x_data.append(x)
+                            y_data.append(y)
+                        except ValueError:
+                            # Skip lines that don't have valid float values
+                            pass
+            if x_data and y_data:
+                return np.array(x_data), np.array(y_data)
+            return None, None
+            
+        # Try to read as CSV first for other formats
         data = pd.read_csv(file, header=None)
         if data.shape[1] >= 2:
             return data.iloc[:, 0], data.iloc[:, 1]
     except:
         # If CSV fails, try to read as text
-        content = file.getvalue().decode('utf-8')
-        # Try to find data patterns
-        lines = content.split('\n')
-        x_data = []
-        y_data = []
-        for line in lines:
-            # Look for pairs of numbers
-            numbers = re.findall(r'[-+]?\d*\.\d+|\d+', line)
-            if len(numbers) >= 2:
-                x_data.append(float(numbers[0]))
-                y_data.append(float(numbers[1]))
-        if x_data and y_data:
-            return np.array(x_data), np.array(y_data)
+        try:
+            content = file.getvalue().decode('utf-8')
+            # Try to find data patterns
+            lines = content.split('\n')
+            x_data = []
+            y_data = []
+            for line in lines:
+                # Skip comment lines
+                if line.strip() and not line.strip().startswith('#'):
+                    # Look for pairs of numbers
+                    numbers = re.findall(r'[-+]?\d*\.\d+|\d+', line)
+                    if len(numbers) >= 2:
+                        x_data.append(float(numbers[0]))
+                        y_data.append(float(numbers[1]))
+            if x_data and y_data:
+                return np.array(x_data), np.array(y_data)
+        except:
+            pass
     return None, None
 
 # Function to normalize data
 def normalize_data(y_data):
     return (y_data - np.min(y_data)) / (np.max(y_data) - np.min(y_data))
 
-# File uploader
-uploaded_files = st.file_uploader("Upload XRD files", accept_multiple_files=True, type=['txt', 'csv', 'dat'])
+# File uploader - now including .xy format
+uploaded_files = st.file_uploader("Upload XRD files", accept_multiple_files=True, type=['txt', 'csv', 'dat', 'xy'])
 
 if uploaded_files:
     # Create figure

@@ -33,7 +33,7 @@ streamlit run app.py
 
 2. Open your web browser and navigate to the URL shown in the terminal (typically http://localhost:8501)
 
-3. Upload your XRD data files (supported formats: .txt, .csv, .dat)
+3. Upload your XRD data files (supported formats: .txt, .csv, .dat, .xy)
 
 4. Use the controls to:
    - Normalize the data
@@ -46,9 +46,12 @@ streamlit run app.py
 ## Data Format
 
 The application accepts XRD data in various formats:
+- .xy files (standard XRD data format, typically space or tab-separated values)
 - CSV files with two columns (2θ and intensity)
 - Text files with space or tab-separated values
 - Files with two columns of numerical data
+
+The application will automatically detect and parse the file format, ignoring comment lines (starting with '#') and handling different separators.
 
 ## Requirements
 
