@@ -136,13 +136,24 @@ if uploaded_files:
                 science_style = st.selectbox("Science style", 
                                             ["science", "ieee", "nature", "science", "grid"], 
                                             index=0)
+                # Add an option to use LaTeX for text rendering
+                use_latex = st.checkbox("Use LaTeX for text rendering", value=False)
         else:
             use_publication_style = False
+            use_latex = False
             st.warning("scienceplots package not found. Install with: pip install scienceplots")
     
     # Set up the figure with the selected style
     if HAS_SCIENCEPLOTS and use_publication_style:
         plt.style.use(['science', science_style])
+        
+        # Configure matplotlib to use LaTeX if requested
+        if use_latex:
+            plt.rcParams.update({
+                "text.usetex": True,
+                "font.family": "serif",
+                "font.serif": ["Computer Modern Roman"],
+            })
     
     # Create figure
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -214,8 +225,12 @@ if uploaded_files:
                 'label': label
             })
     
-    # Customize plot
-    ax.set_xlabel("2θ (degrees)")
+    # Customize plot - use LaTeX-compatible theta character for the x-axis label
+    if use_latex:
+        ax.set_xlabel(r"$2\theta$ (degrees)")
+    else:
+        ax.set_xlabel("2$\theta$ (degrees)")  # This works in non-LaTeX mode
+    
     ax.set_ylabel("Intensity (a.u.)")
     
     # Set x-axis limits if custom range is specified
@@ -257,7 +272,12 @@ if uploaded_files:
                 
                 save_ax.plot(x_plot, y_plot, label=data['label'])
             
-            save_ax.set_xlabel("2θ (degrees)")
+            # Use LaTeX-compatible theta character for the x-axis label in the saved figure
+            if use_latex:
+                save_ax.set_xlabel(r"$2\theta$ (degrees)")
+            else:
+                save_ax.set_xlabel("2$\theta$ (degrees)")
+                
             save_ax.set_ylabel("Intensity (a.u.)")
             
             if use_custom_range:
