@@ -9,20 +9,16 @@ st.set_page_config(
 
 # Now import other libraries and set up dependencies
 import sys
-import subprocess
-import importlib.util
 import re
+import base64
+from io import BytesIO
+import importlib.util
 
 # Initialize dependency status tracking
 MATPLOTLIB_AVAILABLE = False
 SCIPY_AVAILABLE = False
 
-# Self-installing mechanism for critical dependencies - now after st.set_page_config()
-def install_package(package):
-    st.info(f"Installing {package}... This may take a moment.")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
-    st.success(f"Successfully installed {package}!")
-
+# Function to check if a package is installed
 def is_package_installed(package_name):
     return importlib.util.find_spec(package_name) is not None
 
@@ -36,13 +32,7 @@ def load_core_dependencies():
 # Load these essential libraries only once they're needed
 np, pd = load_core_dependencies()
 
-# Check and install critical packages - after st.set_page_config()
-critical_packages = ["matplotlib", "scipy", "numpy", "pandas"]
-for package in critical_packages:
-    if not is_package_installed(package):
-        install_package(package)
-
-# Try to import matplotlib with expanded error handling - moved to a function to avoid startup delay
+# Try to import matplotlib with expanded error handling
 @st.cache_resource
 def load_matplotlib():
     try:
@@ -50,18 +40,9 @@ def load_matplotlib():
         import matplotlib.pyplot as plt
         return plt, True, None
     except ImportError as e:
-        try:
-            # Try installing it
-            install_package("matplotlib")
-            # Try again after installation
-            import matplotlib
-            matplotlib.use('Agg')  # Try the Agg backend which has fewer dependencies
-            import matplotlib.pyplot as plt
-            return plt, True, "Installed matplotlib successfully. Using alternative configuration."
-        except Exception as e2:
-            return None, False, f"Could not import matplotlib. Some features will be limited. Error: {str(e2)}"
+        return None, False, f"Could not import matplotlib. Some features will be limited. Error: {str(e)}"
 
-# Try to import scipy with expanded error handling - moved to a function to avoid startup delay
+# Try to import scipy with expanded error handling
 @st.cache_resource
 def load_scipy():
     try:
@@ -69,31 +50,143 @@ def load_scipy():
         from scipy.signal import savgol_filter
         return savgol_filter, True, None
     except ImportError as e:
-        try:
-            # Try installing it
-            install_package("scipy")
-            # Try again after installation
-            import scipy
-            from scipy.signal import savgol_filter
-            return savgol_filter, True, "Installed scipy successfully."
-        except Exception as e2:
-            return None, False, f"Could not import scipy. Smoothing features will be disabled. Error: {str(e2)}"
+        return None, False, f"Could not import scipy. Smoothing features will be disabled. Error: {str(e)}"
 
-# Import scienceplots for publication-quality plots (wrapped in a function to avoid startup delay)
+# Import scienceplots for publication-quality plots
 @st.cache_resource
 def load_scienceplots():
     try:
         import scienceplots
         return {"scienceplots": scienceplots}
-    except ImportError as e:
-        try:
-            # Try installing it
-            install_package("scienceplots")
-            # Try again after installation
-            import scienceplots
-            return {"scienceplots": scienceplots}
-        except Exception as e2:
-            return {"scienceplots": None, "error": str(e2)}
+    except ImportError:
+        return {"scienceplots": None}
+
+# Fallback plotting function using HTML/CSS when matplotlib is not available
+def create_basic_plot_html(x_data, y_data, labels, colors, title="XRD Data"):
+    """Create a basic plot using HTML/CSS when matplotlib is not available"""
+    html = f"""
+    <style>
+    .plot-container {{
+        height: 400px;
+        width: 100%;
+        position: relative;
+        border: 1px solid #ddd;
+        padding: 20px;
+        background-color: white;
+    }}
+    .plot-line {{
+        position: absolute;
+        bottom: 50px;
+        height: 300px;
+        width: 100%;
+        left: 50px;
+    }}
+    .plot-point {{
+        position: absolute;
+        width: 2px;
+        background-color: var(--color);
+        bottom: 50px;
+    }}
+    .plot-title {{
+        text-align: center;
+        font-weight: bold;
+        margin-bottom: 10px;
+    }}
+    .x-axis {{
+        position: absolute;
+        bottom: 20px;
+        left: 50px;
+        right: 20px;
+        height: 1px;
+        background-color: black;
+    }}
+    .y-axis {{
+        position: absolute;
+        bottom: 20px;
+        left: 50px;
+        width: 1px;
+        height: 330px;
+        background-color: black;
+    }}
+    .x-label {{
+        position: absolute;
+        bottom: 0;
+        text-align: center;
+        width: 100%;
+    }}
+    .y-label {{
+        position: absolute;
+        left: 0;
+        bottom: 175px;
+        transform: rotate(-90deg);
+        transform-origin: center left;
+    }}
+    .legend {{
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        border: 1px solid #ddd;
+        padding: 5px;
+        background-color: rgba(255,255,255,0.8);
+    }}
+    .legend-item {{
+        margin: 5px;
+        display: flex;
+        align-items: center;
+    }}
+    .legend-color {{
+        width: 20px;
+        height: 3px;
+        margin-right: 5px;
+    }}
+    </style>
+    
+    <div class="plot-container">
+        <div class="plot-title">{title}</div>
+        <div class="x-axis"></div>
+        <div class="y-axis"></div>
+        <div class="x-label">2θ (degrees)</div>
+        <div class="y-label">Intensity (a.u.)</div>
+    """
+    
+    if len(x_data) > 0:
+        # Find global min/max for scaling
+        all_x = np.concatenate([d for d in x_data if len(d) > 0])
+        all_y = np.concatenate([d for d in y_data if len(d) > 0])
+        x_min = np.min(all_x)
+        x_max = np.max(all_x)
+        y_min = np.min(all_y)
+        y_max = np.max(all_y)
+        x_range = x_max - x_min
+        y_range = y_max - y_min if y_max > y_min else 1
+        
+        # Add points for each dataset
+        legend_html = '<div class="legend">'
+        for i, (x, y) in enumerate(zip(x_data, y_data)):
+            if len(x) > 0 and len(y) > 0:
+                color = colors[i] if i < len(colors) else f"hsl({(i * 50) % 360}, 70%, 50%)"
+                label = labels[i] if i < len(labels) else f"Data {i+1}"
+                
+                # Only plot a subset of points for performance
+                step = max(1, len(x) // 100)
+                for j in range(0, len(x), step):
+                    x_pos = 50 + ((x[j] - x_min) / x_range) * (100 - 70)  # 70% width
+                    height = ((y[j] - y_min) / y_range) * 300  # Scale to 300px height
+                    html += f'<div class="plot-point" style="left: {x_pos}%; height: {height}px; background-color: {color};"></div>'
+                
+                # Add to legend
+                legend_html += f"""
+                <div class="legend-item">
+                    <div class="legend-color" style="background-color: {color};"></div>
+                    <div>{label}</div>
+                </div>
+                """
+        
+        legend_html += '</div>'
+        html += legend_html
+    
+    html += "</div>"
+    return html
 
 # Only initialize these when first needed
 plt = None
@@ -102,6 +195,13 @@ deps = {"scienceplots_loaded": False, "modules": None}
 
 st.title("XRD Data Plotter")
 st.write("Upload XRD files to visualize, compare, and analyze X-ray diffraction patterns")
+
+st.sidebar.markdown("""
+## Tips for First-time Users
+- Upload one or more XRD files (.txt, .csv, .dat, .xy)
+- Each file can be individually customized (color, normalization, etc.)
+- The sidebar provides global settings for the plot
+""")
 
 # Function to read XRD data
 def read_xrd_data(file):
@@ -166,106 +266,175 @@ def normalize_data(y_data):
 # File uploader - now including .xy format
 uploaded_files = st.file_uploader("Upload XRD files", accept_multiple_files=True, type=['txt', 'csv', 'dat', 'xy'])
 
-# Only load dependencies when they're actually needed (after files are uploaded)
-if uploaded_files:
-    # Load matplotlib now, since we'll need it
-    plt, MATPLOTLIB_AVAILABLE, matplotlib_error = load_matplotlib()
-    savgol_filter, SCIPY_AVAILABLE, scipy_error = load_scipy()
-    
-    # Display any errors
-    if matplotlib_error:
-        st.error(matplotlib_error)
-    if scipy_error:
-        st.error(scipy_error)
-    
-    # Display dependencies status in a more user-friendly way
-    with st.expander("System Information", expanded=True if not MATPLOTLIB_AVAILABLE or not SCIPY_AVAILABLE else False):
-        st.write("## Dependencies Status")
+# Display app status in the sidebar
+st.sidebar.title("App Status")
+with st.sidebar.status("Checking system requirements...", expanded=False) as status:
+    # Only load dependencies when they're actually needed (after files are uploaded)
+    if uploaded_files:
+        # Load matplotlib now, since we'll need it
+        plt, MATPLOTLIB_AVAILABLE, matplotlib_error = load_matplotlib()
+        savgol_filter, SCIPY_AVAILABLE, scipy_error = load_scipy()
         
-        col1, col2 = st.columns(2)
-        with col1:
-            st.write("### Core Dependencies")
-            st.write(f"- Matplotlib: {'Available ✅' if MATPLOTLIB_AVAILABLE else 'Not Available ❌'}")
-            st.write(f"- SciPy: {'Available ✅' if SCIPY_AVAILABLE else 'Not Available ❌'}")
-            st.write(f"- NumPy: Available ✅ ({np.__version__})")
-            st.write(f"- Pandas: Available ✅ ({pd.__version__})")
-        
-        with col2:
-            st.write("### System Information")
-            st.write(f"- Python version: {sys.version}")
-            st.write(f"- Platform: {sys.platform}")
-            
-            if not MATPLOTLIB_AVAILABLE or not SCIPY_AVAILABLE:
-                st.write("### Troubleshooting")
-                st.info("Some dependencies are missing. The app will still work with limited functionality.")
-                if not MATPLOTLIB_AVAILABLE:
-                    st.info("Without matplotlib, plotting features will be disabled, but data processing will still work.")
-                if not SCIPY_AVAILABLE:
-                    st.info("Without scipy, smoothing features will be disabled, but other features will work normally.")
+        # Display any errors in the status
+        if matplotlib_error:
+            status.update(label="System Check - Issues Found", state="error", expanded=True)
+            st.sidebar.error(matplotlib_error)
+        elif scipy_error:
+            status.update(label="System Check - Issues Found", state="warning", expanded=True)
+            st.sidebar.warning(scipy_error)
+        else:
+            status.update(label="System Ready", state="complete")
+    else:
+        status.update(label="System Ready - Waiting for Upload", state="complete")
 
+# Process uploaded files
+if uploaded_files:
+    # Main content area for processing files
+    all_data = []
+    all_processed_data = []
+    all_labels = []
+    all_colors = []
+    
+    # Global settings for fallback HTML plot
+    min_x_all = float('inf')
+    max_x_all = float('-inf')
+    use_custom_range = False
+    min_theta = 0
+    max_theta = 100
+    
+    # Create sidebar for global settings (using whether matplotlib is available or not)
+    with st.sidebar:
+        st.header("Global Settings")
+        
+        # Create a container for plot range settings
+        st.subheader("Plot Range")
+        use_custom_range = st.checkbox("Use custom 2θ range", value=False)
+        if use_custom_range:
+            # Get the range of all uploaded files to set reasonable defaults
+            for file in uploaded_files:
+                x_data, _ = read_xrd_data(file)
+                if x_data is not None and len(x_data) > 0:
+                    min_x_all = min(min_x_all, np.min(x_data))
+                    max_x_all = max(max_x_all, np.max(x_data))
+            
+            # If we couldn't get ranges from files, use defaults
+            if min_x_all == float('inf'):
+                min_x_all, max_x_all = 0, 100
+            
+            # Add some padding
+            min_x_all = max(0, min_x_all - 5)
+            max_x_all = max_x_all + 5
+            
+            # Create range sliders
+            col1, col2 = st.columns(2)
+            with col1:
+                min_theta = st.number_input("Min 2θ", value=float(min_x_all), min_value=0.0)
+            with col2:
+                max_theta = st.number_input("Max 2θ", value=float(max_x_all), min_value=min_theta + 1.0)
+    
+    # Process each file
+    for i, file in enumerate(uploaded_files):
+        x_data, y_data = read_xrd_data(file)
+        
+        if x_data is not None and y_data is not None:
+            # Store original data
+            all_data.append({
+                'x': x_data,
+                'y': y_data,
+                'filename': file.name
+            })
+            
+            # Create a container for this file's controls
+            with st.expander(f"Controls for {file.name}", expanded=True):
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    normalize = st.checkbox("Normalize", key=f"norm_{i}")
+                
+                with col2:
+                    label = st.text_input("Label", value=file.name, key=f"label_{i}")
+                
+                with col3:
+                    # Fix the Y-offset issue by clearly separating it from other operations
+                    y_offset = st.number_input("Y-offset", min_value=0.0, max_value=100.0, value=0.0, step=0.5, key=f"offset_{i}")
+                
+                color = st.color_picker("Color", key=f"color_{i}")
+                all_colors.append(color)
+                
+                # Apply smoothing if requested
+                if SCIPY_AVAILABLE and st.checkbox("Apply smoothing", key=f"smooth_{i}"):
+                    window = st.slider("Smoothing window", 3, 51, 5, 2, key=f"window_{i}")
+                    # Apply smoothing to a copy of the data to avoid modifying the original
+                    y_data_processed = savgol_filter(y_data.copy(), window, 2)
+                else:
+                    # Use a copy to avoid modifying the original
+                    y_data_processed = y_data.copy()
+                
+                # Normalize if requested (after smoothing)
+                if normalize:
+                    y_data_processed = normalize_data(y_data_processed)
+                
+                # Apply offset AFTER all other processing
+                y_data_processed = y_data_processed + y_offset
+                
+                # Store processed data for potential export
+                all_processed_data.append({
+                    'x': x_data,
+                    'y': y_data_processed,
+                    'label': label,
+                    'color': color
+                })
+                
+                all_labels.append(label)
+    
+    # Plot data
     if not MATPLOTLIB_AVAILABLE:
-        st.warning("Plotting is disabled due to missing matplotlib dependency. You can still upload and process data.")
+        st.warning("Matplotlib is not available. Using simplified plotting mode.")
         
-        if uploaded_files:
-            st.write("## Data Preview")
-            for i, file in enumerate(uploaded_files):
-                x_data, y_data = read_xrd_data(file)
-                if x_data is not None and y_data is not None:
-                    df = pd.DataFrame({
-                        '2θ': x_data,
-                        'Intensity': y_data
-                    })
-                    st.write(f"### {file.name}")
-                    st.dataframe(df.head(10))
-                    
-                    # Export data
-                    st.download_button(
-                        label=f"Download {file.name} data",
-                        data=df.to_csv(index=False),
-                        file_name=f"{file.name}.csv",
-                        mime="text/csv"
-                    )
+        # Extract data for HTML plotting
+        x_data_list = []
+        y_data_list = []
         
+        for data in all_processed_data:
+            if use_custom_range:
+                mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
+                x_plot = data['x'][mask]
+                y_plot = data['y'][mask]
+            else:
+                x_plot = data['x']
+                y_plot = data['y']
+            
+            x_data_list.append(x_plot)
+            y_data_list.append(y_plot)
+        
+        # Create HTML plot
+        html_plot = create_basic_plot_html(x_data_list, y_data_list, all_labels, all_colors)
+        st.components.v1.html(html_plot, height=500)
+        
+        # Export options
+        if st.button("Export Data"):
+            for data in all_processed_data:
+                df = pd.DataFrame({
+                    '2θ': data['x'],
+                    'Intensity': data['y']
+                })
+                st.download_button(
+                    label=f"Download {data['label']}",
+                    data=df.to_csv(index=False),
+                    file_name=f"{data['label']}.csv",
+                    mime="text/csv"
+                )
+    
     elif uploaded_files:
-        # Initialize variables for plot settings
+        # Full matplotlib plotting
         use_latex = False
         use_publication_style = False
         science_style = "science"
         legend_position = "best"
         legend_bbox_to_anchor = None
         
-        # Create sidebar for global settings
+        # Continue with the additional settings if matplotlib is available
         with st.sidebar:
-            st.header("Global Settings")
-            
-            # Create a container for plot range settings
-            st.subheader("Plot Range")
-            use_custom_range = st.checkbox("Use custom 2θ range", value=False)
-            if use_custom_range:
-                # Get the range of all uploaded files to set reasonable defaults
-                min_x_all = float('inf')
-                max_x_all = float('-inf')
-                for file in uploaded_files:
-                    x_data, _ = read_xrd_data(file)
-                    if x_data is not None and len(x_data) > 0:
-                        min_x_all = min(min_x_all, np.min(x_data))
-                        max_x_all = max(max_x_all, np.max(x_data))
-                
-                # If we couldn't get ranges from files, use defaults
-                if min_x_all == float('inf'):
-                    min_x_all, max_x_all = 0, 100
-                
-                # Add some padding
-                min_x_all = max(0, min_x_all - 5)
-                max_x_all = max_x_all + 5
-                
-                # Create range sliders
-                col1, col2 = st.columns(2)
-                with col1:
-                    min_theta = st.number_input("Min 2θ", value=float(min_x_all), min_value=0.0)
-                with col2:
-                    max_theta = st.number_input("Max 2θ", value=float(max_x_all), min_value=min_theta + 1.0)
-            
             # Legend settings
             st.subheader("Legend Settings")
             show_legend = st.checkbox("Show legend", value=True)
@@ -326,163 +495,18 @@ if uploaded_files:
         # Create figure
         fig, ax = plt.subplots(figsize=(10, 6))
         
-        # Store data for each file and their processed versions
-        all_data = []
-        all_processed_data = []
-        
-        # Store label positions and text for each spectrum
-        all_labels = []
-        
-        # Main content area - process each file
-        for i, file in enumerate(uploaded_files):
-            x_data, y_data = read_xrd_data(file)
+        # Main content area - process each file for plotting
+        for i, data in enumerate(all_processed_data):
+            if use_custom_range:
+                mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
+                x_plot = data['x'][mask]
+                y_plot = data['y'][mask]
+            else:
+                x_plot = data['x']
+                y_plot = data['y']
             
-            if x_data is not None and y_data is not None:
-                # Store original data
-                all_data.append({
-                    'x': x_data,
-                    'y': y_data,
-                    'filename': file.name
-                })
-                
-                # Create a container for this file's controls
-                with st.expander(f"Controls for {file.name}", expanded=True):
-                    col1, col2, col3 = st.columns(3)
-                    
-                    with col1:
-                        normalize = st.checkbox("Normalize", key=f"norm_{i}")
-                    
-                    with col2:
-                        label = st.text_input("Label", value=file.name, key=f"label_{i}")
-                    
-                    with col3:
-                        # Fix the Y-offset issue by clearly separating it from other operations
-                        y_offset = st.number_input("Y-offset", min_value=0.0, max_value=100.0, value=0.0, step=0.5, key=f"offset_{i}")
-                    
-                    color = st.color_picker("Color", key=f"color_{i}")
-                    
-                    # Apply smoothing if requested
-                    if SCIPY_AVAILABLE and st.checkbox("Apply smoothing", key=f"smooth_{i}"):
-                        window = st.slider("Smoothing window", 3, 51, 5, 2, key=f"window_{i}")
-                        # Apply smoothing to a copy of the data to avoid modifying the original
-                        y_data_processed = savgol_filter(y_data.copy(), window, 2)
-                    else:
-                        # Use a copy to avoid modifying the original
-                        y_data_processed = y_data.copy()
-                    
-                    # Normalize if requested (after smoothing)
-                    if normalize:
-                        y_data_processed = normalize_data(y_data_processed)
-                    
-                    # Apply offset AFTER all other processing
-                    y_data_processed = y_data_processed + y_offset
-
-                    # Add label positioning controls on right side of the plot
-                    st.subheader("Label Position")
-                    show_label = st.checkbox("Show label on plot", value=True, key=f"show_label_{i}")
-                    
-                    if show_label:
-                        # Get data within the visible range for default positioning
-                        if use_custom_range:
-                            mask = (x_data >= min_theta) & (x_data <= max_theta)
-                            x_range = x_data[mask]
-                            y_range = y_data_processed[mask]
-                            if len(x_range) > 0:
-                                max_x = max_theta - (max_theta - min_theta) * 0.05  # 95% of the way to the right edge
-                            else:
-                                max_x = max_theta
-                        else:
-                            if len(x_data) > 0:
-                                x_max = np.max(x_data)
-                                x_min = np.min(x_data)
-                                max_x = x_max - (x_max - x_min) * 0.05  # 95% of the way to the right edge
-                            else:
-                                max_x = 0
-                        
-                        # Get the y-value at this x position or nearby
-                        if len(x_data) > 0 and len(y_data_processed) > 0:
-                            # Find the closest x-value to our desired position
-                            if use_custom_range:
-                                mask = (x_data >= min_theta) & (x_data <= max_theta)
-                                x_visible = x_data[mask]
-                                y_visible = y_data_processed[mask]
-                            else:
-                                x_visible = x_data
-                                y_visible = y_data_processed
-                                
-                            if len(x_visible) > 0:
-                                # Find nearest x-value to our desired position
-                                nearest_idx = np.abs(x_visible - max_x).argmin()
-                                default_y = y_visible[nearest_idx]
-                            else:
-                                default_y = 0
-                        else:
-                            default_y = 0
-                        
-                        # Create columns for X and Y positioning
-                        label_col1, label_col2 = st.columns(2)
-                        
-                        with label_col1:
-                            x_pos = st.number_input(
-                                "X Position", 
-                                value=float(max_x),
-                                min_value=float(min_theta) if use_custom_range else float(np.min(x_data)) if len(x_data) > 0 else 0.0,
-                                max_value=float(max_theta) if use_custom_range else float(np.max(x_data)) if len(x_data) > 0 else 100.0,
-                                key=f"label_x_{i}"
-                            )
-                        
-                        with label_col2:
-                            y_pos = st.number_input(
-                                "Y Position", 
-                                value=float(default_y),
-                                key=f"label_y_{i}"
-                            )
-                        
-                        # Store the label information
-                        all_labels.append({
-                            'x': x_pos,
-                            'y': y_pos,
-                            'text': label,
-                            'color': color,
-                            'show': True
-                        })
-                    else:
-                        all_labels.append({
-                            'show': False
-                        })
-                
-                # Filter data if custom range is specified
-                if use_custom_range:
-                    mask = (x_data >= min_theta) & (x_data <= max_theta)
-                    x_plot = x_data[mask]
-                    y_plot = y_data_processed[mask]
-                else:
-                    x_plot = x_data
-                    y_plot = y_data_processed
-                
-                # Plot the data
-                ax.plot(x_plot, y_plot, label=label, color=color)
-                
-                # Store processed data for potential export
-                all_processed_data.append({
-                    'x': x_data,
-                    'y': y_data_processed,
-                    'label': label,
-                    'color': color
-                })
-        
-        # Add the positioned labels to the plot
-        for label_info in all_labels:
-            if label_info['show']:
-                ax.text(
-                    label_info['x'], 
-                    label_info['y'], 
-                    label_info['text'],
-                    color=label_info['color'],
-                    ha='right',  # Right-align the text
-                    va='center',  # Vertically center the text
-                    fontweight='bold'
-                )
+            # Plot the data
+            ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
         
         # Customize plot - use LaTeX-compatible theta character for the x-axis label
         if use_latex:
@@ -532,19 +556,6 @@ if uploaded_files:
                     
                     save_ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
                 
-                # Add the positioned labels to the saved plot
-                for label_info in all_labels:
-                    if label_info['show']:
-                        save_ax.text(
-                            label_info['x'], 
-                            label_info['y'], 
-                            label_info['text'],
-                            color=label_info['color'],
-                            ha='right',  # Right-align the text
-                            va='center',  # Vertically center the text
-                            fontweight='bold'
-                        )
-                
                 # Use LaTeX-compatible theta character for the x-axis label in the saved figure
                 if use_latex:
                     save_ax.set_xlabel(r"$2\theta$ (degrees)")
@@ -566,11 +577,34 @@ if uploaded_files:
                         save_ax.legend(loc=legend_position)
                 
                 # Save the figure
-                save_fig.savefig("xrd_plot.png", dpi=dpi, bbox_inches="tight")
-                save_fig.savefig("xrd_plot.pdf", bbox_inches="tight")
-                plt.close(save_fig)
+                buf = BytesIO()
+                save_fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
+                buf.seek(0)
                 
-                st.success("Figure saved as 'xrd_plot.png' and 'xrd_plot.pdf'")
+                # Create a download button
+                btn = st.download_button(
+                    label="Download PNG",
+                    data=buf,
+                    file_name="xrd_plot.png",
+                    mime="image/png"
+                )
+                
+                # Also try PDF if possible
+                try:
+                    buf_pdf = BytesIO()
+                    save_fig.savefig(buf_pdf, format="pdf", bbox_inches="tight")
+                    buf_pdf.seek(0)
+                    
+                    btn_pdf = st.download_button(
+                        label="Download PDF",
+                        data=buf_pdf,
+                        file_name="xrd_plot.pdf",
+                        mime="application/pdf"
+                    )
+                except:
+                    st.warning("PDF export is not available in this environment.")
+                
+                plt.close(save_fig)
         
         # Export options
         with col2:
