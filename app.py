@@ -78,6 +78,33 @@ def read_xrd_data(file):
 def normalize_data(y_data):
     return (y_data - np.min(y_data)) / (np.max(y_data) - np.min(y_data))
 
+# Function to find optimal position for labels
+def find_label_position(x_data, y_data):
+    if len(x_data) == 0 or len(y_data) == 0:
+        return 0, 0
+    
+    # Option 1: Use the position of the highest peak
+    max_idx = np.argmax(y_data)
+    max_x = x_data[max_idx]
+    max_y = y_data[max_idx]
+    
+    # Option 2: Use the average of multiple peak positions
+    # (Uncomment if preferred)
+    # peak_indices = find_peaks(y_data, height=np.max(y_data) * 0.5)[0]
+    # if len(peak_indices) > 0:
+    #     max_x = np.mean(x_data[peak_indices])
+    #     max_y = np.mean(y_data[peak_indices])
+    
+    # Option 3: Use the middle of the spectrum
+    # mid_idx = len(x_data) // 2
+    # max_x = x_data[mid_idx]
+    # max_y = y_data[mid_idx]
+    
+    # Add a small offset above the point
+    label_y_offset = max_y * 0.05  # 5% above the peak height
+    
+    return max_x, max_y + label_y_offset
+
 # File uploader - now including .xy format
 uploaded_files = st.file_uploader("Upload XRD files", accept_multiple_files=True, type=['txt', 'csv', 'dat', 'xy'])
 
@@ -121,9 +148,15 @@ if uploaded_files:
             with col2:
                 max_theta = st.number_input("Max 2θ", value=float(max_x_all), min_value=min_theta + 1.0)
         
-        # Legend position controls
-        st.subheader("Legend Settings")
+        # Legend and label settings
+        st.subheader("Labels & Legend Settings")
         show_legend = st.checkbox("Show legend", value=True)
+        show_inline_labels = st.checkbox("Show labels above spectra", value=True)
+        
+        if show_inline_labels:
+            # Settings for inline labels
+            inline_label_offset = st.slider("Label vertical offset", 0.0, 1.0, 0.1, 0.01,
+                                          help="Controls how far above the spectrum lines the labels appear")
         
         if show_legend:
             legend_options = ["best", "upper right", "upper left", "lower left", "lower right", 
@@ -218,66 +251,6 @@ if uploaded_files:
                 
                 # Apply offset AFTER all other processing
                 y_data_processed = y_data_processed + y_offset
-                
-                # Add label positioning controls
-                st.subheader("Label on Plot")
-                display_label_on_plot = st.checkbox("Show label on plot", key=f"show_label_{i}")
-                
-                if display_label_on_plot:
-                    label_col1, label_col2 = st.columns(2)
-                    
-                    # Get the range of x and y data for reasonable default positioning
-                    if use_custom_range:
-                        mask = (x_data >= min_theta) & (x_data <= max_theta)
-                        x_range = x_data[mask]
-                        y_range = y_data_processed[mask]
-                    else:
-                        x_range = x_data
-                        y_range = y_data_processed
-                    
-                    if len(x_range) > 0 and len(y_range) > 0:
-                        # Find position of maximum peak for default label position
-                        max_peak_idx = np.argmax(y_range)
-                        default_x = x_range[max_peak_idx]
-                        default_y = y_range[max_peak_idx] + 0.2  # Position slightly above the peak
-                    else:
-                        default_x = 0
-                        default_y = 0
-                    
-                    with label_col1:
-                        x_pos = st.number_input(
-                            "X position", 
-                            value=float(default_x), 
-                            key=f"label_x_{i}"
-                        )
-                    
-                    with label_col2:
-                        y_pos = st.number_input(
-                            "Y position", 
-                            value=float(default_y),
-                            key=f"label_y_{i}"
-                        )
-                    
-                    text_align = st.selectbox(
-                        "Text alignment", 
-                        ["left", "center", "right"],
-                        index=0,
-                        key=f"align_{i}"
-                    )
-                    
-                    # Store the label information
-                    all_labels.append({
-                        'x': x_pos,
-                        'y': y_pos,
-                        'text': label,
-                        'color': color,
-                        'align': text_align,
-                        'show': True
-                    })
-                else:
-                    all_labels.append({
-                        'show': False
-                    })
             
             # Filter data if custom range is specified
             if use_custom_range:
@@ -291,6 +264,30 @@ if uploaded_files:
             # Plot the data
             ax.plot(x_plot, y_plot, label=label, color=color)
             
+            # Find position for label above the spectrum line
+            if show_inline_labels:
+                label_x, label_y = find_label_position(x_plot, y_plot)
+                
+                # Apply additional offset based on user setting
+                if 'inline_label_offset' in locals():
+                    # Calculate appropriate vertical offset based on plot scale
+                    y_range = np.max(y_plot) - np.min(y_plot)
+                    if y_range > 0:
+                        label_y = label_y + y_range * inline_label_offset
+                
+                # Store the label information
+                all_labels.append({
+                    'x': label_x,
+                    'y': label_y,
+                    'text': label,
+                    'color': color,
+                    'show': True
+                })
+            else:
+                all_labels.append({
+                    'show': False
+                })
+            
             # Store processed data for potential export
             all_processed_data.append({
                 'x': x_data,
@@ -299,18 +296,18 @@ if uploaded_files:
                 'color': color
             })
     
-    # Add the custom positioned labels to the plot
+    # Add the labels directly above the spectral lines
     for label_info in all_labels:
         if label_info['show']:
-            ha = label_info['align']  # Horizontal alignment
             ax.text(
                 label_info['x'], 
                 label_info['y'], 
                 label_info['text'],
                 color=label_info['color'],
-                ha=ha,
-                va='bottom',  # Vertical alignment - below the point
-                fontweight='bold'
+                ha='center',  # Center the text horizontally
+                va='bottom',  # Position the text at the bottom
+                fontweight='bold',
+                bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=1)  # Add a semi-transparent background
             )
     
     # Customize plot - use LaTeX-compatible theta character for the x-axis label
@@ -361,18 +358,18 @@ if uploaded_files:
                 
                 save_ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
             
-            # Add the custom positioned labels to the saved plot
+            # Add the labels directly above the spectral lines in the saved figure
             for label_info in all_labels:
                 if label_info['show']:
-                    ha = label_info['align']  # Horizontal alignment
                     save_ax.text(
                         label_info['x'], 
                         label_info['y'], 
                         label_info['text'],
                         color=label_info['color'],
-                        ha=ha,
-                        va='bottom',  # Vertical alignment - below the point
-                        fontweight='bold'
+                        ha='center',  # Center the text horizontally
+                        va='bottom',  # Position the text at the bottom
+                        fontweight='bold',
+                        bbox=dict(facecolor='white', alpha=0.7, edgecolor='none', pad=1)  # Add a semi-transparent background
                     )
             
             # Use LaTeX-compatible theta character for the x-axis label in the saved figure
