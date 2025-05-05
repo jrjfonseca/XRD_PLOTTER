@@ -3,12 +3,17 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.9
+  - python
   - streamlit
   - numpy
   - pandas
   - matplotlib
   - scipy
+  - cycler
+  - kiwisolver
+  - pillow
+  - pyparsing
+  - python-dateutil
   - pip
   - pip:
     - xrayutilities
