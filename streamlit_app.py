@@ -1,4 +1,22 @@
 import streamlit as st
+import sys
+import subprocess
+import importlib.util
+
+# Self-installing mechanism for critical dependencies
+def install_package(package):
+    st.info(f"Installing {package}... This may take a moment.")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", package])
+    st.success(f"Successfully installed {package}!")
+
+def is_package_installed(package_name):
+    return importlib.util.find_spec(package_name) is not None
+
+# Check and install critical packages
+critical_packages = ["matplotlib", "scipy", "numpy", "pandas"]
+for package in critical_packages:
+    if not is_package_installed(package):
+        install_package(package)
 
 # Set page title and favicon - MUST be the first Streamlit command
 st.set_page_config(
@@ -8,7 +26,6 @@ st.set_page_config(
 )
 
 # Only import the absolutely essential packages at startup
-import sys
 import re
 
 # Initialize dependency status tracking
@@ -34,13 +51,15 @@ def load_matplotlib():
         return plt, True, None
     except ImportError as e:
         try:
-            # Force matplotlib to use a different backend
+            # Try installing it
+            install_package("matplotlib")
+            # Try again after installation
             import matplotlib
             matplotlib.use('Agg')  # Try the Agg backend which has fewer dependencies
             import matplotlib.pyplot as plt
-            return plt, True, "Using alternative matplotlib configuration. Some features may be limited."
-        except ImportError:
-            return None, False, f"Could not import matplotlib. Some features will be limited. Error: {str(e)}"
+            return plt, True, "Installed matplotlib successfully. Using alternative configuration."
+        except Exception as e2:
+            return None, False, f"Could not import matplotlib. Some features will be limited. Error: {str(e2)}"
 
 # Try to import scipy with expanded error handling - moved to a function to avoid startup delay
 @st.cache_resource
@@ -50,7 +69,15 @@ def load_scipy():
         from scipy.signal import savgol_filter
         return savgol_filter, True, None
     except ImportError as e:
-        return None, False, f"Could not import scipy. Smoothing features will be disabled. Error: {str(e)}"
+        try:
+            # Try installing it
+            install_package("scipy")
+            # Try again after installation
+            import scipy
+            from scipy.signal import savgol_filter
+            return savgol_filter, True, "Installed scipy successfully."
+        except Exception as e2:
+            return None, False, f"Could not import scipy. Smoothing features will be disabled. Error: {str(e2)}"
 
 # Import scienceplots for publication-quality plots (wrapped in a function to avoid startup delay)
 @st.cache_resource
@@ -59,7 +86,14 @@ def load_scienceplots():
         import scienceplots
         return {"scienceplots": scienceplots}
     except ImportError as e:
-        return {"scienceplots": None, "error": str(e)}
+        try:
+            # Try installing it
+            install_package("scienceplots")
+            # Try again after installation
+            import scienceplots
+            return {"scienceplots": scienceplots}
+        except Exception as e2:
+            return {"scienceplots": None, "error": str(e2)}
 
 # Only initialize these when first needed
 plt = None
