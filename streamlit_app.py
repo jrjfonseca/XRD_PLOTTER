@@ -16,17 +16,13 @@ import sys
 MATPLOTLIB_AVAILABLE = False
 SCIPY_AVAILABLE = False
 
-# Define version strings for better error reporting
-MATPLOTLIB_VERSION = "3.5.3"
-SCIPY_VERSION = "1.9.3"
-
 # Try to import matplotlib with expanded error handling
 try:
     import matplotlib
     import matplotlib.pyplot as plt
     MATPLOTLIB_AVAILABLE = True
 except ImportError as e:
-    st.error(f"Could not import matplotlib {MATPLOTLIB_VERSION}. Some features will be limited. Error: {str(e)}")
+    st.error(f"Could not import matplotlib. Some features will be limited. Error: {str(e)}")
     # Try a different approach if available
     try:
         # Force matplotlib to use a different backend
@@ -43,7 +39,7 @@ try:
     from scipy.signal import savgol_filter
     SCIPY_AVAILABLE = True
 except ImportError as e:
-    st.error(f"Could not import scipy {SCIPY_VERSION}. Smoothing features will be disabled. Error: {str(e)}")
+    st.error(f"Could not import scipy. Smoothing features will be disabled. Error: {str(e)}")
 
 # Import scienceplots for publication-quality plots (wrapped in a function to avoid startup delay)
 @st.cache_resource
