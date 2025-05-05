@@ -7,6 +7,7 @@ A Streamlit application for visualizing and analyzing XRD (X-ray Diffraction) da
 - Load multiple XRD data files
 - Normalize spectra
 - Customize labels and colors
+- Position labels directly on the plot above spectral lines
 - Adjust Y-offset for better visualization
 - Control the 2θ degree range to display
 - Custom legend positioning
@@ -44,6 +45,7 @@ streamlit run app.py
    - Adjust Y-offset
    - Change colors
    - Apply smoothing
+   - Position labels directly on the plot with custom alignment
    - Export processed data
 
 5. Use the sidebar to:

@@ -123,17 +123,20 @@ if uploaded_files:
         
         # Legend position controls
         st.subheader("Legend Settings")
-        legend_options = ["best", "upper right", "upper left", "lower left", "lower right", 
-                          "right", "center left", "center right", "lower center", "upper center", 
-                          "center", "outside"]
-        legend_position = st.selectbox("Legend position", legend_options, index=0)
+        show_legend = st.checkbox("Show legend", value=True)
         
-        # If 'outside' is selected, place it to the right of the plot
-        if legend_position == "outside":
-            legend_position = "center left"
-            legend_bbox_to_anchor = (1.05, 0.5)
-        else:
-            legend_bbox_to_anchor = None
+        if show_legend:
+            legend_options = ["best", "upper right", "upper left", "lower left", "lower right", 
+                            "right", "center left", "center right", "lower center", "upper center", 
+                            "center", "outside"]
+            legend_position = st.selectbox("Legend position", legend_options, index=0)
+            
+            # If 'outside' is selected, place it to the right of the plot
+            if legend_position == "outside":
+                legend_position = "center left"
+                legend_bbox_to_anchor = (1.05, 0.5)
+            else:
+                legend_bbox_to_anchor = None
             
         # Plot Style Settings
         st.subheader("Plot Style")
@@ -168,6 +171,9 @@ if uploaded_files:
     # Store data for each file and their processed versions
     all_data = []
     all_processed_data = []
+    
+    # Store label positions and text for each spectrum
+    all_labels = []
     
     # Main content area - process each file
     for i, file in enumerate(uploaded_files):
@@ -212,6 +218,66 @@ if uploaded_files:
                 
                 # Apply offset AFTER all other processing
                 y_data_processed = y_data_processed + y_offset
+                
+                # Add label positioning controls
+                st.subheader("Label on Plot")
+                display_label_on_plot = st.checkbox("Show label on plot", key=f"show_label_{i}")
+                
+                if display_label_on_plot:
+                    label_col1, label_col2 = st.columns(2)
+                    
+                    # Get the range of x and y data for reasonable default positioning
+                    if use_custom_range:
+                        mask = (x_data >= min_theta) & (x_data <= max_theta)
+                        x_range = x_data[mask]
+                        y_range = y_data_processed[mask]
+                    else:
+                        x_range = x_data
+                        y_range = y_data_processed
+                    
+                    if len(x_range) > 0 and len(y_range) > 0:
+                        # Find position of maximum peak for default label position
+                        max_peak_idx = np.argmax(y_range)
+                        default_x = x_range[max_peak_idx]
+                        default_y = y_range[max_peak_idx] + 0.2  # Position slightly above the peak
+                    else:
+                        default_x = 0
+                        default_y = 0
+                    
+                    with label_col1:
+                        x_pos = st.number_input(
+                            "X position", 
+                            value=float(default_x), 
+                            key=f"label_x_{i}"
+                        )
+                    
+                    with label_col2:
+                        y_pos = st.number_input(
+                            "Y position", 
+                            value=float(default_y),
+                            key=f"label_y_{i}"
+                        )
+                    
+                    text_align = st.selectbox(
+                        "Text alignment", 
+                        ["left", "center", "right"],
+                        index=0,
+                        key=f"align_{i}"
+                    )
+                    
+                    # Store the label information
+                    all_labels.append({
+                        'x': x_pos,
+                        'y': y_pos,
+                        'text': label,
+                        'color': color,
+                        'align': text_align,
+                        'show': True
+                    })
+                else:
+                    all_labels.append({
+                        'show': False
+                    })
             
             # Filter data if custom range is specified
             if use_custom_range:
@@ -229,8 +295,23 @@ if uploaded_files:
             all_processed_data.append({
                 'x': x_data,
                 'y': y_data_processed,
-                'label': label
+                'label': label,
+                'color': color
             })
+    
+    # Add the custom positioned labels to the plot
+    for label_info in all_labels:
+        if label_info['show']:
+            ha = label_info['align']  # Horizontal alignment
+            ax.text(
+                label_info['x'], 
+                label_info['y'], 
+                label_info['text'],
+                color=label_info['color'],
+                ha=ha,
+                va='bottom',  # Vertical alignment - below the point
+                fontweight='bold'
+            )
     
     # Customize plot - use LaTeX-compatible theta character for the x-axis label
     if use_latex:
@@ -246,11 +327,12 @@ if uploaded_files:
     
     ax.grid(True, alpha=0.3)
     
-    # Create the legend with the specified position
-    if legend_bbox_to_anchor:
-        ax.legend(loc=legend_position, bbox_to_anchor=legend_bbox_to_anchor)
-    else:
-        ax.legend(loc=legend_position)
+    # Create the legend with the specified position if requested
+    if show_legend:
+        if legend_bbox_to_anchor:
+            ax.legend(loc=legend_position, bbox_to_anchor=legend_bbox_to_anchor)
+        else:
+            ax.legend(loc=legend_position)
     
     # Display plot
     st.pyplot(fig)
@@ -277,7 +359,21 @@ if uploaded_files:
                     x_plot = data['x']
                     y_plot = data['y']
                 
-                save_ax.plot(x_plot, y_plot, label=data['label'])
+                save_ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
+            
+            # Add the custom positioned labels to the saved plot
+            for label_info in all_labels:
+                if label_info['show']:
+                    ha = label_info['align']  # Horizontal alignment
+                    save_ax.text(
+                        label_info['x'], 
+                        label_info['y'], 
+                        label_info['text'],
+                        color=label_info['color'],
+                        ha=ha,
+                        va='bottom',  # Vertical alignment - below the point
+                        fontweight='bold'
+                    )
             
             # Use LaTeX-compatible theta character for the x-axis label in the saved figure
             if use_latex:
@@ -292,10 +388,12 @@ if uploaded_files:
             
             save_ax.grid(True, alpha=0.3)
             
-            if legend_bbox_to_anchor:
-                save_ax.legend(loc=legend_position, bbox_to_anchor=legend_bbox_to_anchor)
-            else:
-                save_ax.legend(loc=legend_position)
+            # Add legend to saved figure if requested
+            if show_legend:
+                if legend_bbox_to_anchor:
+                    save_ax.legend(loc=legend_position, bbox_to_anchor=legend_bbox_to_anchor)
+                else:
+                    save_ax.legend(loc=legend_position)
             
             # Save the figure
             save_fig.savefig("xrd_plot.png", dpi=dpi, bbox_inches="tight")
