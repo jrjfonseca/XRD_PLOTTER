@@ -74,17 +74,57 @@ def normalize_data(y_data):
 uploaded_files = st.file_uploader("Upload XRD files", accept_multiple_files=True, type=['txt', 'csv', 'dat', 'xy'])
 
 if uploaded_files:
+    # Create sidebar for global settings
+    with st.sidebar:
+        st.header("Global Settings")
+        
+        # Create a container for plot range settings
+        st.subheader("Plot Range")
+        use_custom_range = st.checkbox("Use custom 2θ range", value=False)
+        if use_custom_range:
+            # Get the range of all uploaded files to set reasonable defaults
+            min_x_all = float('inf')
+            max_x_all = float('-inf')
+            for file in uploaded_files:
+                x_data, _ = read_xrd_data(file)
+                if x_data is not None and len(x_data) > 0:
+                    min_x_all = min(min_x_all, np.min(x_data))
+                    max_x_all = max(max_x_all, np.max(x_data))
+            
+            # If we couldn't get ranges from files, use defaults
+            if min_x_all == float('inf'):
+                min_x_all, max_x_all = 0, 100
+            
+            # Add some padding
+            min_x_all = max(0, min_x_all - 5)
+            max_x_all = max_x_all + 5
+            
+            # Create range sliders
+            col1, col2 = st.columns(2)
+            with col1:
+                min_theta = st.number_input("Min 2θ", value=float(min_x_all), min_value=0.0)
+            with col2:
+                max_theta = st.number_input("Max 2θ", value=float(max_x_all), min_value=min_theta + 1.0)
+    
     # Create figure
     fig, ax = plt.subplots(figsize=(10, 6))
     
-    # Store data for each file
+    # Store data for each file and their processed versions
     all_data = []
+    all_processed_data = []
     
-    # Process each file
+    # Main content area - process each file
     for i, file in enumerate(uploaded_files):
         x_data, y_data = read_xrd_data(file)
         
         if x_data is not None and y_data is not None:
+            # Store original data
+            all_data.append({
+                'x': x_data,
+                'y': y_data,
+                'filename': file.name
+            })
+            
             # Create a container for this file's controls
             with st.expander(f"Controls for {file.name}", expanded=True):
                 col1, col2, col3 = st.columns(3)
@@ -96,35 +136,54 @@ if uploaded_files:
                     label = st.text_input("Label", value=file.name, key=f"label_{i}")
                 
                 with col3:
-                    offset = st.slider("Y-offset", 0.0, 10.0, 0.0, 0.5, key=f"offset_{i}")
+                    # Fix the Y-offset issue by clearly separating it from other operations
+                    y_offset = st.number_input("Y-offset", min_value=0.0, max_value=100.0, value=0.0, step=0.5, key=f"offset_{i}")
                 
                 color = st.color_picker("Color", key=f"color_{i}")
                 
                 # Apply smoothing if requested
                 if st.checkbox("Apply smoothing", key=f"smooth_{i}"):
                     window = st.slider("Smoothing window", 3, 51, 5, 2, key=f"window_{i}")
-                    y_data = savgol_filter(y_data, window, 2)
+                    # Apply smoothing to a copy of the data to avoid modifying the original
+                    y_data_processed = savgol_filter(y_data.copy(), window, 2)
+                else:
+                    # Use a copy to avoid modifying the original
+                    y_data_processed = y_data.copy()
+                
+                # Normalize if requested (after smoothing)
+                if normalize:
+                    y_data_processed = normalize_data(y_data_processed)
+                
+                # Apply offset AFTER all other processing
+                y_data_processed = y_data_processed + y_offset
             
-            # Normalize if requested
-            if normalize:
-                y_data = normalize_data(y_data)
-            
-            # Apply offset
-            y_data = y_data + offset
+            # Filter data if custom range is specified
+            if use_custom_range:
+                mask = (x_data >= min_theta) & (x_data <= max_theta)
+                x_plot = x_data[mask]
+                y_plot = y_data_processed[mask]
+            else:
+                x_plot = x_data
+                y_plot = y_data_processed
             
             # Plot the data
-            line = ax.plot(x_data, y_data, label=label, color=color)
+            ax.plot(x_plot, y_plot, label=label, color=color)
             
-            # Store data for potential export
-            all_data.append({
+            # Store processed data for potential export
+            all_processed_data.append({
                 'x': x_data,
-                'y': y_data,
+                'y': y_data_processed,
                 'label': label
             })
     
     # Customize plot
     ax.set_xlabel("2θ (degrees)")
     ax.set_ylabel("Intensity (a.u.)")
+    
+    # Set x-axis limits if custom range is specified
+    if use_custom_range:
+        ax.set_xlim(min_theta, max_theta)
+    
     ax.grid(True, alpha=0.3)
     ax.legend()
     
@@ -133,7 +192,7 @@ if uploaded_files:
     
     # Export options
     if st.button("Export Data"):
-        for data in all_data:
+        for data in all_processed_data:
             df = pd.DataFrame({
                 '2θ': data['x'],
                 'Intensity': data['y']
