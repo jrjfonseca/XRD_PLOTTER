@@ -1,9 +1,23 @@
 import streamlit as st
+
+# Set page title and favicon - THIS MUST BE THE VERY FIRST STREAMLIT COMMAND
+st.set_page_config(
+    page_title="XRD Plotter",
+    page_icon="📊",
+    layout="wide"
+)
+
+# Now import other libraries and set up dependencies
 import sys
 import subprocess
 import importlib.util
+import re
 
-# Self-installing mechanism for critical dependencies
+# Initialize dependency status tracking
+MATPLOTLIB_AVAILABLE = False
+SCIPY_AVAILABLE = False
+
+# Self-installing mechanism for critical dependencies - now after st.set_page_config()
 def install_package(package):
     st.info(f"Installing {package}... This may take a moment.")
     subprocess.check_call([sys.executable, "-m", "pip", "install", package])
@@ -11,26 +25,6 @@ def install_package(package):
 
 def is_package_installed(package_name):
     return importlib.util.find_spec(package_name) is not None
-
-# Check and install critical packages
-critical_packages = ["matplotlib", "scipy", "numpy", "pandas"]
-for package in critical_packages:
-    if not is_package_installed(package):
-        install_package(package)
-
-# Set page title and favicon - MUST be the first Streamlit command
-st.set_page_config(
-    page_title="XRD Plotter",
-    page_icon="📊",
-    layout="wide"
-)
-
-# Only import the absolutely essential packages at startup
-import re
-
-# Initialize dependency status tracking
-MATPLOTLIB_AVAILABLE = False
-SCIPY_AVAILABLE = False
 
 # Function to lazily load numpy and pandas when needed
 @st.cache_resource
@@ -41,6 +35,12 @@ def load_core_dependencies():
 
 # Load these essential libraries only once they're needed
 np, pd = load_core_dependencies()
+
+# Check and install critical packages - after st.set_page_config()
+critical_packages = ["matplotlib", "scipy", "numpy", "pandas"]
+for package in critical_packages:
+    if not is_package_installed(package):
+        install_package(package)
 
 # Try to import matplotlib with expanded error handling - moved to a function to avoid startup delay
 @st.cache_resource
