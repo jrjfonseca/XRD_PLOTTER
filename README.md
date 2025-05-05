@@ -9,6 +9,8 @@ A Streamlit application for visualizing and analyzing XRD (X-ray Diffraction) da
 - Customize labels and colors
 - Adjust Y-offset for better visualization
 - Control the 2θ degree range to display
+- Custom legend positioning
+- Publication-quality plotting using SciencePlots
 - Apply smoothing to the data
 - Export processed data
 - Interactive plot with legend
@@ -46,7 +48,13 @@ streamlit run app.py
 
 5. Use the sidebar to:
    - Set custom 2θ range for the plot
-   - Control global settings that apply to all data
+   - Position the legend anywhere in the plot
+   - Enable publication-quality plots using SciencePlots
+   - Select different scientific plotting styles
+
+6. Additional features:
+   - Save high-resolution figures in PNG and PDF formats
+   - Export processed data as CSV files
 
 ## Data Format
 

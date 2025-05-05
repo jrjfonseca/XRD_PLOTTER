@@ -6,6 +6,14 @@ import pandas as pd
 from io import StringIO
 import re
 
+# Import scienceplots for publication-quality plots
+try:
+    import scienceplots
+    HAS_SCIENCEPLOTS = True
+except ImportError:
+    HAS_SCIENCEPLOTS = False
+    st.warning("scienceplots not found. Please install with: pip install scienceplots")
+
 st.set_page_config(page_title="XRD Plotter", layout="wide")
 
 st.title("XRD Data Plotter")
@@ -105,6 +113,36 @@ if uploaded_files:
                 min_theta = st.number_input("Min 2θ", value=float(min_x_all), min_value=0.0)
             with col2:
                 max_theta = st.number_input("Max 2θ", value=float(max_x_all), min_value=min_theta + 1.0)
+        
+        # Legend position controls
+        st.subheader("Legend Settings")
+        legend_options = ["best", "upper right", "upper left", "lower left", "lower right", 
+                          "right", "center left", "center right", "lower center", "upper center", 
+                          "center", "outside"]
+        legend_position = st.selectbox("Legend position", legend_options, index=0)
+        
+        # If 'outside' is selected, place it to the right of the plot
+        if legend_position == "outside":
+            legend_position = "center left"
+            legend_bbox_to_anchor = (1.05, 0.5)
+        else:
+            legend_bbox_to_anchor = None
+            
+        # Plot Style Settings
+        st.subheader("Plot Style")
+        if HAS_SCIENCEPLOTS:
+            use_publication_style = st.checkbox("Use publication quality style", value=False)
+            if use_publication_style:
+                science_style = st.selectbox("Science style", 
+                                            ["science", "ieee", "nature", "science", "grid"], 
+                                            index=0)
+        else:
+            use_publication_style = False
+            st.warning("scienceplots package not found. Install with: pip install scienceplots")
+    
+    # Set up the figure with the selected style
+    if HAS_SCIENCEPLOTS and use_publication_style:
+        plt.style.use(['science', science_style])
     
     # Create figure
     fig, ax = plt.subplots(figsize=(10, 6))
@@ -185,23 +223,73 @@ if uploaded_files:
         ax.set_xlim(min_theta, max_theta)
     
     ax.grid(True, alpha=0.3)
-    ax.legend()
+    
+    # Create the legend with the specified position
+    if legend_bbox_to_anchor:
+        ax.legend(loc=legend_position, bbox_to_anchor=legend_bbox_to_anchor)
+    else:
+        ax.legend(loc=legend_position)
     
     # Display plot
     st.pyplot(fig)
     
+    # Add option to save the figure with publication quality
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Save Figure"):
+            # Save figure with high dpi for publication
+            dpi = 300
+            width = st.sidebar.number_input("Width (inches)", value=8.0, min_value=1.0, max_value=20.0)
+            height = st.sidebar.number_input("Height (inches)", value=6.0, min_value=1.0, max_value=20.0)
+            
+            # Create a new figure with the specified dimensions for saving
+            save_fig, save_ax = plt.subplots(figsize=(width, height))
+            
+            # Recreate the plot
+            for i, data in enumerate(all_processed_data):
+                if use_custom_range:
+                    mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
+                    x_plot = data['x'][mask]
+                    y_plot = data['y'][mask]
+                else:
+                    x_plot = data['x']
+                    y_plot = data['y']
+                
+                save_ax.plot(x_plot, y_plot, label=data['label'])
+            
+            save_ax.set_xlabel("2θ (degrees)")
+            save_ax.set_ylabel("Intensity (a.u.)")
+            
+            if use_custom_range:
+                save_ax.set_xlim(min_theta, max_theta)
+            
+            save_ax.grid(True, alpha=0.3)
+            
+            if legend_bbox_to_anchor:
+                save_ax.legend(loc=legend_position, bbox_to_anchor=legend_bbox_to_anchor)
+            else:
+                save_ax.legend(loc=legend_position)
+            
+            # Save the figure
+            save_fig.savefig("xrd_plot.png", dpi=dpi, bbox_inches="tight")
+            save_fig.savefig("xrd_plot.pdf", bbox_inches="tight")
+            plt.close(save_fig)
+            
+            st.success("Figure saved as 'xrd_plot.png' and 'xrd_plot.pdf'")
+    
     # Export options
-    if st.button("Export Data"):
-        for data in all_processed_data:
-            df = pd.DataFrame({
-                '2θ': data['x'],
-                'Intensity': data['y']
-            })
-            st.download_button(
-                label=f"Download {data['label']}",
-                data=df.to_csv(index=False),
-                file_name=f"{data['label']}.csv",
-                mime="text/csv"
-            )
+    with col2:
+        if st.button("Export Data"):
+            for data in all_processed_data:
+                df = pd.DataFrame({
+                    '2θ': data['x'],
+                    'Intensity': data['y']
+                })
+                st.download_button(
+                    label=f"Download {data['label']}",
+                    data=df.to_csv(index=False),
+                    file_name=f"{data['label']}.csv",
+                    mime="text/csv"
+                )
 else:
     st.info("Please upload XRD data files to begin plotting.") 
