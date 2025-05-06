@@ -1,43 +1,55 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
-import plotly.express as px
-from plotly.subplots import make_subplots
 import re
 import warnings
 from io import BytesIO
 from typing import Tuple, List, Dict, Optional, Any, Union
 
-# Configure page 
+# Configure page immediately (must be first Streamlit command)
 st.set_page_config(
     page_title="XRD Plotter",
     page_icon="📊",
     layout="wide"
 )
 
-# Configuration and constants
+# Application constants
 CONFIG = {
     "DEFAULT_THETA_MIN": 0,
     "DEFAULT_THETA_MAX": 100,
     "PADDING": 5,
     "SUPPORTED_FORMATS": ['txt', 'csv', 'dat', 'xy'],
     "LABEL_OFFSET_PERCENT": 0.05,  # Position labels 5% from the end of visible range
-    "COLORS": px.colors.qualitative.Plotly  # Default color palette
 }
 
-# Check for SciPy availability
+# Safely import optional dependencies
+SCIPY_AVAILABLE = False
+PLOTLY_AVAILABLE = False
+
 try:
     from scipy.signal import savgol_filter
     SCIPY_AVAILABLE = True
 except ImportError:
-    SCIPY_AVAILABLE = False
     warnings.warn("SciPy not available. Smoothing features will be disabled.")
     
     # Define a dummy savgol_filter function for fallback
     def savgol_filter(data, window_length, polyorder, **kwargs):
         """Dummy function when scipy is not available."""
         return data
+
+try:
+    import plotly.graph_objects as go
+    import plotly.express as px
+    PLOTLY_AVAILABLE = True
+    # Default color palette from Plotly
+    CONFIG["COLORS"] = px.colors.qualitative.Plotly
+except ImportError:
+    warnings.warn("Plotly not available. Using fallback visualization.")
+    # Fallback colors if Plotly isn't available
+    CONFIG["COLORS"] = [
+        "#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", 
+        "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52"
+    ]
 
 # ===== Data Processing Functions =====
 
@@ -51,6 +63,9 @@ def read_xrd_data(file) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     Returns:
         Tuple of (x_data, y_data) as numpy arrays, or (None, None) if parsing fails
     """
+    if file is None:
+        return None, None
+        
     file_name = file.name.lower()
     
     try:
@@ -63,63 +78,74 @@ def read_xrd_data(file) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
         if data.shape[1] >= 2:
             return data.iloc[:, 0].values, data.iloc[:, 1].values
             
-    except Exception:
-        pass
+    except Exception as e:
+        st.error(f"Error parsing file as CSV: {str(e)}")
         
     # Fall back to general text parsing
     try:
         content = file.getvalue().decode('utf-8')
         return _parse_general_text(content)
-    except Exception:
-        st.error(f"Could not parse file: {file.name}")
+    except Exception as e:
+        st.error(f"Could not parse file {file.name}: {str(e)}")
         
     return None, None
 
 
 def _parse_xy_file(file) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """Parse space/tab-separated XY file format."""
-    content = file.getvalue().decode('utf-8')
-    x_data, y_data = [], []
-    
-    for line in content.split('\n'):
-        if not line.strip() or line.strip().startswith('#'):
-            continue
-            
-        fields = re.split(r'\s+', line.strip())
-        if len(fields) >= 2:
-            try:
-                x_data.append(float(fields[0]))
-                y_data.append(float(fields[1]))
-            except ValueError:
+    try:
+        content = file.getvalue().decode('utf-8')
+        x_data, y_data = [], []
+        
+        for line in content.split('\n'):
+            if not line.strip() or line.strip().startswith('#'):
                 continue
                 
-    if not x_data:
+            fields = re.split(r'\s+', line.strip())
+            if len(fields) >= 2:
+                try:
+                    x_data.append(float(fields[0]))
+                    y_data.append(float(fields[1]))
+                except ValueError:
+                    continue
+                    
+        if not x_data:
+            return None, None
+            
+        return np.array(x_data), np.array(y_data)
+    except Exception as e:
+        st.error(f"Error parsing XY file: {str(e)}")
         return None, None
-        
-    return np.array(x_data), np.array(y_data)
 
 
 def _parse_general_text(content: str) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """Attempt to parse text with numeric data in any reasonable format."""
-    x_data, y_data = [], []
-    
-    for line in content.split('\n'):
-        if not line.strip() or line.strip().startswith('#'):
-            continue
-            
-        numbers = re.findall(r'[-+]?\d*\.\d+|\d+', line)
-        if len(numbers) >= 2:
-            x_data.append(float(numbers[0]))
-            y_data.append(float(numbers[1]))
-            
-    if not x_data:
-        return None, None
+    try:
+        x_data, y_data = [], []
         
-    return np.array(x_data), np.array(y_data)
+        for line in content.split('\n'):
+            if not line.strip() or line.strip().startswith('#'):
+                continue
+                
+            numbers = re.findall(r'[-+]?\d*\.\d+|\d+', line)
+            if len(numbers) >= 2:
+                x_data.append(float(numbers[0]))
+                y_data.append(float(numbers[1]))
+                
+        if not x_data:
+            return None, None
+            
+        return np.array(x_data), np.array(y_data)
+    except Exception as e:
+        st.error(f"Error parsing text data: {str(e)}")
+        return None, None
 
 
 def normalize_data(y_data: np.ndarray) -> np.ndarray:
     """Scale data to range [0,1]."""
+    if y_data is None or len(y_data) == 0:
+        return np.array([])
+        
     y_min, y_max = np.min(y_data), np.max(y_data)
     if y_max == y_min:
         return np.zeros_like(y_data)
@@ -131,6 +157,9 @@ def apply_smooth(y_data: np.ndarray, window_size: int) -> np.ndarray:
     if not SCIPY_AVAILABLE:
         st.warning("Smoothing unavailable - SciPy not installed")
         return y_data
+    
+    if y_data is None or len(y_data) == 0:
+        return np.array([])
         
     if window_size % 2 == 0:
         window_size += 1  # Ensure odd window size
@@ -148,14 +177,78 @@ def apply_smooth(y_data: np.ndarray, window_size: int) -> np.ndarray:
         return y_data
 
 
+def find_label_position(x_data, y_data, is_custom_range, min_theta=None, max_theta=None):
+    """Find appropriate default position for spectrum label."""
+    if x_data is None or y_data is None or not len(x_data) or not len(y_data):
+        return 0, 0
+        
+    if is_custom_range and min_theta is not None and max_theta is not None:
+        mask = (x_data >= min_theta) & (x_data <= max_theta)
+        x_visible = x_data[mask] if any(mask) else x_data
+        y_visible = y_data[mask] if any(mask) else y_data
+        
+        if len(x_visible) == 0:
+            return max_theta, 0
+            
+        max_x = max_theta - (max_theta - min_theta) * CONFIG["LABEL_OFFSET_PERCENT"]
+    else:
+        if len(x_data) == 0:
+            return 0, 0
+            
+        x_min = np.min(x_data)
+        x_max = np.max(x_data)
+        max_x = x_max - (x_max - x_min) * CONFIG["LABEL_OFFSET_PERCENT"]
+    
+    # Find closest y-value to the chosen x-position
+    x_visible = x_data
+    y_visible = y_data
+    
+    if is_custom_range and min_theta is not None and max_theta is not None:
+        mask = (x_data >= min_theta) & (x_data <= max_theta)
+        if any(mask):
+            x_visible = x_data[mask]
+            y_visible = y_data[mask]
+    
+    if len(x_visible) > 0:
+        nearest_idx = np.abs(x_visible - max_x).argmin()
+        default_y = y_visible[nearest_idx]
+        return max_x, default_y
+    
+    return max_x, 0
+
+
+def get_data_range(files) -> Tuple[float, float]:
+    """Calculate the data range from all uploaded files."""
+    min_x, max_x = float('inf'), float('-inf')
+    
+    for file in files:
+        x_data, _ = read_xrd_data(file)
+        if x_data is not None and len(x_data) > 0:
+            min_x = min(min_x, np.min(x_data))
+            max_x = max(max_x, np.max(x_data))
+    
+    # Set reasonable defaults if no range found
+    if min_x == float('inf'):
+        min_x, max_x = CONFIG["DEFAULT_THETA_MIN"], CONFIG["DEFAULT_THETA_MAX"]
+    
+    # Add padding
+    min_x = max(0, min_x - CONFIG["PADDING"])
+    max_x = max_x + CONFIG["PADDING"]
+    
+    return min_x, max_x
+
+
 # ===== Plotting Functions =====
 
 def create_interactive_plot(
     processed_data: List[Dict[str, Any]],
     label_positions: List[Dict[str, Any]],
     plot_config: Dict[str, Any]
-) -> go.Figure:
+) -> Any:
     """Create an interactive Plotly figure with the processed data."""
+    if not PLOTLY_AVAILABLE:
+        return create_fallback_plot(processed_data, label_positions, plot_config)
+        
     # Create the figure
     fig = go.Figure()
     
@@ -239,91 +332,46 @@ def create_interactive_plot(
     return fig
 
 
-def export_figure_as_image(
-    fig: go.Figure,
-    format: str = 'png',
-    width: int = 800,
-    height: int = 600,
-    scale: int = 2
-) -> Optional[BytesIO]:
-    """Export a Plotly figure as an image."""
-    try:
-        buf = BytesIO()
-        fig.write_image(
-            buf, 
-            format=format, 
-            width=width, 
-            height=height, 
-            scale=scale,
-            engine="kaleido"
-        )
-        buf.seek(0)
-        return buf
-    except Exception as e:
-        st.error(f"Error exporting figure: {str(e)}")
-        st.info("Try installing the kaleido package: `pip install kaleido`")
-        return None
-
-
-def find_label_position(x_data, y_data, is_custom_range, min_theta=None, max_theta=None):
-    """Find appropriate default position for spectrum label."""
-    if not len(x_data) or not len(y_data):
-        return 0, 0
-        
-    if is_custom_range and min_theta is not None and max_theta is not None:
-        mask = (x_data >= min_theta) & (x_data <= max_theta)
-        x_visible = x_data[mask] if any(mask) else x_data
-        y_visible = y_data[mask] if any(mask) else y_data
-        
-        if len(x_visible) == 0:
-            return max_theta, 0
+def create_fallback_plot(
+    processed_data: List[Dict[str, Any]],
+    label_positions: List[Dict[str, Any]],
+    plot_config: Dict[str, Any]
+) -> None:
+    """Create a fallback visualization using Streamlit's native plotting capabilities."""
+    st.warning("Using Streamlit's native plotting as Plotly is not available")
+    
+    # Process each dataset
+    for i, data in enumerate(processed_data):
+        # Apply custom range if needed
+        if plot_config.get('use_custom_range', False):
+            min_theta = plot_config['min_theta']
+            max_theta = plot_config['max_theta']
+            mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
+            x_plot = data['x'][mask]
+            y_plot = data['y'][mask]
+        else:
+            x_plot = data['x']
+            y_plot = data['y']
             
-        max_x = max_theta - (max_theta - min_theta) * CONFIG["LABEL_OFFSET_PERCENT"]
-    else:
-        if len(x_data) == 0:
-            return 0, 0
-            
-        x_min = np.min(x_data)
-        x_max = np.max(x_data)
-        max_x = x_max - (x_max - x_min) * CONFIG["LABEL_OFFSET_PERCENT"]
+        # Create a dataframe for this dataset
+        df = pd.DataFrame({
+            '2θ (degrees)': x_plot,
+            data['label']: y_plot
+        })
+        
+        # Display using Streamlit's line chart
+        st.subheader(f"{data['label']}")
+        st.line_chart(df.set_index('2θ (degrees)'), color=data['color'][1:] if len(data['color']) > 1 else None)
     
-    # Find closest y-value to the chosen x-position
-    x_visible = x_data
-    y_visible = y_data
-    
-    if is_custom_range and min_theta is not None and max_theta is not None:
-        mask = (x_data >= min_theta) & (x_data <= max_theta)
-        if any(mask):
-            x_visible = x_data[mask]
-            y_visible = y_data[mask]
-    
-    if len(x_visible) > 0:
-        nearest_idx = np.abs(x_visible - max_x).argmin()
-        default_y = y_visible[nearest_idx]
-        return max_x, default_y
-    
-    return max_x, 0
-
-
-def get_data_range(files) -> Tuple[float, float]:
-    """Calculate the data range from all uploaded files."""
-    min_x, max_x = float('inf'), float('-inf')
-    
-    for file in files:
-        x_data, _ = read_xrd_data(file)
-        if x_data is not None and len(x_data) > 0:
-            min_x = min(min_x, np.min(x_data))
-            max_x = max(max_x, np.max(x_data))
-    
-    # Set reasonable defaults if no range found
-    if min_x == float('inf'):
-        min_x, max_x = CONFIG["DEFAULT_THETA_MIN"], CONFIG["DEFAULT_THETA_MAX"]
-    
-    # Add padding
-    min_x = max(0, min_x - CONFIG["PADDING"])
-    max_x = max_x + CONFIG["PADDING"]
-    
-    return min_x, max_x
+    # Show label positions in a table if any
+    labeled_data = [label for label in label_positions if label.get('show', False)]
+    if labeled_data:
+        st.subheader("Labels")
+        label_df = pd.DataFrame([
+            {'Label': l['text'], 'X Position (2θ)': l['x'], 'Y Position': l['y']} 
+            for l in labeled_data
+        ])
+        st.dataframe(label_df)
 
 
 # ===== UI Components =====
@@ -351,6 +399,7 @@ def render_sidebar_controls():
         # System status
         st.subheader("System Status")
         st.info(f"SciPy (for smoothing): {'Available' if SCIPY_AVAILABLE else 'Not Available'}")
+        st.info(f"Plotly (for interactive plots): {'Available' if PLOTLY_AVAILABLE else 'Not Available'}")
         
         # Help info
         st.markdown("---")
@@ -477,7 +526,7 @@ def render_file_controls(file, idx, use_custom_range, min_theta=None, max_theta=
     return original_data, processed_data, label_info
 
 
-def render_export_controls(processed_data, fig):
+def render_export_controls(processed_data, fig=None):
     """Render export controls for saving data."""
     if st.button("Export Data"):
         for data in processed_data:
@@ -492,17 +541,21 @@ def render_export_controls(processed_data, fig):
                 mime="text/csv"
             )
         
-        # Offer HTML export of the interactive plot
-        buffer = BytesIO()
-        fig.write_html(buffer)
-        buffer.seek(0)
-        
-        st.download_button(
-            label="Download Interactive Plot (HTML)",
-            data=buffer,
-            file_name="xrd_plot.html",
-            mime="text/html"
-        )
+        # Offer HTML export of the interactive plot if plotly is available
+        if PLOTLY_AVAILABLE and fig is not None:
+            try:
+                buffer = BytesIO()
+                fig.write_html(buffer)
+                buffer.seek(0)
+                
+                st.download_button(
+                    label="Download Interactive Plot (HTML)",
+                    data=buffer,
+                    file_name="xrd_plot.html",
+                    mime="text/html"
+                )
+            except Exception as e:
+                st.error(f"Error exporting HTML: {str(e)}")
 
 
 def render_tutorial():
@@ -537,69 +590,78 @@ def render_tutorial():
 # ===== Main Application =====
 
 def main():
-    st.title("XRD Data Plotter")
-    st.write("Upload XRD files to visualize, compare, and analyze X-ray diffraction patterns")
-    
-    # File uploader
-    uploaded_files = st.file_uploader(
-        "Upload XRD files", 
-        accept_multiple_files=True, 
-        type=CONFIG["SUPPORTED_FORMATS"]
-    )
-    
-    if not uploaded_files:
-        render_tutorial()
-        return
-    
-    # Render sidebar and get plot configuration
-    plot_config = render_sidebar_controls()
-    
-    # Calculate data range if needed
-    if plot_config['use_custom_range']:
-        min_x, max_x = get_data_range(uploaded_files)
+    try:
+        st.title("XRD Data Plotter")
+        st.write("Upload XRD files to visualize, compare, and analyze X-ray diffraction patterns")
         
-        # Create range inputs
-        col1, col2 = st.sidebar.columns(2)
-        with col1:
-            plot_config['min_theta'] = st.number_input("Min 2θ", value=min_x, min_value=0.0)
-        with col2:
-            plot_config['max_theta'] = st.number_input(
-                "Max 2θ", 
-                value=max_x, 
-                min_value=plot_config['min_theta'] + 1.0
-            )
-    
-    # Process files
-    all_data = []
-    all_processed_data = []
-    all_label_positions = []
-    
-    for i, file in enumerate(uploaded_files):
-        original_data, processed_data, label_info = render_file_controls(
-            file, 
-            i, 
-            plot_config['use_custom_range'],
-            plot_config.get('min_theta'),
-            plot_config.get('max_theta')
+        # File uploader
+        uploaded_files = st.file_uploader(
+            "Upload XRD files", 
+            accept_multiple_files=True, 
+            type=CONFIG["SUPPORTED_FORMATS"]
         )
         
-        if original_data and processed_data:
-            all_data.append(original_data)
-            all_processed_data.append(processed_data)
-            all_label_positions.append(label_info)
-    
-    if not all_processed_data:
-        st.error("No valid data files were uploaded. Please check your files.")
-        return
-    
-    # Create interactive plotly figure
-    fig = create_interactive_plot(all_processed_data, all_label_positions, plot_config)
-    
-    # Display plot - use_container_width makes it responsive
-    st.plotly_chart(fig, use_container_width=True, config={'responsive': True})
-    
-    # Export controls
-    render_export_controls(all_processed_data, fig)
+        if not uploaded_files:
+            render_tutorial()
+            return
+        
+        # Render sidebar and get plot configuration
+        plot_config = render_sidebar_controls()
+        
+        # Calculate data range if needed
+        if plot_config['use_custom_range']:
+            min_x, max_x = get_data_range(uploaded_files)
+            
+            # Create range inputs
+            col1, col2 = st.sidebar.columns(2)
+            with col1:
+                plot_config['min_theta'] = st.number_input("Min 2θ", value=min_x, min_value=0.0)
+            with col2:
+                plot_config['max_theta'] = st.number_input(
+                    "Max 2θ", 
+                    value=max_x, 
+                    min_value=plot_config['min_theta'] + 1.0
+                )
+        
+        # Process files
+        all_data = []
+        all_processed_data = []
+        all_label_positions = []
+        
+        for i, file in enumerate(uploaded_files):
+            original_data, processed_data, label_info = render_file_controls(
+                file, 
+                i, 
+                plot_config['use_custom_range'],
+                plot_config.get('min_theta'),
+                plot_config.get('max_theta')
+            )
+            
+            if original_data and processed_data:
+                all_data.append(original_data)
+                all_processed_data.append(processed_data)
+                all_label_positions.append(label_info)
+        
+        if not all_processed_data:
+            st.error("No valid data files were uploaded. Please check your files.")
+            return
+        
+        # Create interactive figure
+        fig = create_interactive_plot(all_processed_data, all_label_positions, plot_config)
+        
+        # Display plot - different handling for Plotly vs fallback
+        if PLOTLY_AVAILABLE:
+            st.plotly_chart(fig, use_container_width=True, config={'responsive': True})
+            
+            # Export controls
+            render_export_controls(all_processed_data, fig)
+        else:
+            # Fallback mode doesn't return a figure object
+            render_export_controls(all_processed_data)
+            
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        st.info("Please report this issue to the repository maintainers.")
 
 
 # Add footer with attribution
@@ -610,8 +672,4 @@ Made with [Streamlit](https://streamlit.io) • [GitHub Repository](https://gith
 
 # Run the application
 if __name__ == "__main__":
-    try:
-        main()
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
-        st.info("Please report this issue to the repository maintainers.") 
+    main() 
