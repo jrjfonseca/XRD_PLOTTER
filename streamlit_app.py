@@ -9,14 +9,27 @@ st.set_page_config(
 
 # Now import other libraries and set up dependencies
 import sys
+import os
 import re
 import base64
 from io import BytesIO
 import importlib.util
 
+# Check if we're running in Streamlit Cloud
+STREAMLIT_CLOUD = os.environ.get('STREAMLIT_CLOUD', 'false').lower() == 'true'
+
 # Initialize dependency status tracking
 MATPLOTLIB_AVAILABLE = False
 SCIPY_AVAILABLE = False
+
+# Attempt to configure matplotlib early with a compatible backend
+try:
+    # Force Agg backend which is most compatible with headless environments
+    import matplotlib
+    matplotlib.use('Agg')
+    MATPLOTLIB_BACKEND_SET = True
+except:
+    MATPLOTLIB_BACKEND_SET = False
 
 # Function to check if a package is installed
 def is_package_installed(package_name):
@@ -36,11 +49,32 @@ np, pd = load_core_dependencies()
 @st.cache_resource
 def load_matplotlib():
     try:
-        import matplotlib
-        import matplotlib.pyplot as plt
-        return plt, True, None
+        # If we already configured the backend, just import plt
+        if MATPLOTLIB_BACKEND_SET:
+            import matplotlib.pyplot as plt
+            return plt, True, None
+        else:
+            # Try with explicit backend configuration
+            import matplotlib
+            matplotlib.use('Agg')  # Use the Agg backend which works in headless environments
+            import matplotlib.pyplot as plt
+            return plt, True, None
     except ImportError as e:
-        return None, False, f"Could not import matplotlib. Some features will be limited. Error: {str(e)}"
+        st.error(f"Could not import matplotlib. Error: {str(e)}")
+        # Try an alternative approach with a different backend
+        try:
+            import matplotlib
+            matplotlib.use('agg')  # Try lowercase 'agg' (sometimes matters)
+            import matplotlib.pyplot as plt
+            return plt, True, "Using alternative matplotlib configuration."
+        except ImportError:
+            # Last resort: try without specifying backend
+            try:
+                import matplotlib.pyplot as plt
+                return plt, True, "Imported matplotlib without specifying backend."
+            except Exception as e2:
+                detailed_error = f"Original error: {str(e)}\nSecond attempt error: {str(e2)}"
+                return None, False, f"Could not import matplotlib. Some features will be limited. Errors: {detailed_error}"
 
 # Try to import scipy with expanded error handling
 @st.cache_resource
