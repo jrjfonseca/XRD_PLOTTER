@@ -51,8 +51,10 @@ except ImportError:
         "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52"
     ]
 
-# ===== Data Processing Functions =====
 
+# ===== DATA PROCESSING FUNCTIONS =====
+
+@st.cache_data
 def read_xrd_data(file) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
     """
     Parse XRD data from various file formats.
@@ -141,6 +143,7 @@ def _parse_general_text(content: str) -> Tuple[Optional[np.ndarray], Optional[np
         return None, None
 
 
+@st.cache_data
 def normalize_data(y_data: np.ndarray) -> np.ndarray:
     """Scale data to range [0,1]."""
     if y_data is None or len(y_data) == 0:
@@ -152,6 +155,7 @@ def normalize_data(y_data: np.ndarray) -> np.ndarray:
     return (y_data - y_min) / (y_max - y_min)
 
 
+@st.cache_data
 def apply_smooth(y_data: np.ndarray, window_size: int) -> np.ndarray:
     """Apply Savitzky-Golay smoothing with error handling."""
     if not SCIPY_AVAILABLE:
@@ -177,6 +181,7 @@ def apply_smooth(y_data: np.ndarray, window_size: int) -> np.ndarray:
         return y_data
 
 
+@st.cache_data
 def find_label_position(x_data, y_data, is_custom_range, min_theta=None, max_theta=None):
     """Find appropriate default position for spectrum label."""
     if x_data is None or y_data is None or not len(x_data) or not len(y_data):
@@ -217,6 +222,7 @@ def find_label_position(x_data, y_data, is_custom_range, min_theta=None, max_the
     return max_x, 0
 
 
+@st.cache_data
 def get_data_range(files) -> Tuple[float, float]:
     """Calculate the data range from all uploaded files."""
     min_x, max_x = float('inf'), float('-inf')
@@ -238,7 +244,7 @@ def get_data_range(files) -> Tuple[float, float]:
     return min_x, max_x
 
 
-# ===== Plotting Functions =====
+# ===== PLOTTING FUNCTIONS =====
 
 def create_interactive_plot(
     processed_data: List[Dict[str, Any]],
@@ -374,7 +380,7 @@ def create_fallback_plot(
         st.dataframe(label_df)
 
 
-# ===== UI Components =====
+# ===== UI COMPONENTS =====
 
 def render_sidebar_controls():
     """Render the sidebar controls and return configuration."""
@@ -587,9 +593,10 @@ def render_tutorial():
         """)
 
 
-# ===== Main Application =====
+# ===== MAIN APPLICATION =====
 
 def main():
+    """Main application entry point."""
     try:
         st.title("XRD Data Plotter")
         st.write("Upload XRD files to visualize, compare, and analyze X-ray diffraction patterns")
@@ -664,7 +671,7 @@ def main():
         st.info("Please report this issue to the repository maintainers.")
 
 
-# Add footer with attribution
+# Footer with attribution
 st.markdown("""
 ---
 Made with [Streamlit](https://streamlit.io) • [GitHub Repository](https://github.com/jrjfonseca/XRD_PLOTTER)

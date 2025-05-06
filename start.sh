@@ -1,43 +1,45 @@
 #!/bin/bash
 set -e
 
-echo "Starting deployment process..."
+echo "XRD Plotter - Deployment Initialization"
 
-# Check Python version
-python_version=$(python3 --version)
-echo "Using Python: $python_version"
+# Diagnostic information
+echo "Environment:"
+echo "- Python: $(python3 --version)"
+echo "- Working directory: $(pwd)"
 
-# Check pip
-pip_version=$(pip --version)
-echo "Using pip: $pip_version"
-
-# Verify installation of key packages
-echo "Verifying installed packages..."
-pip list | grep streamlit
-pip list | grep plotly
-pip list | grep numpy
-pip list | grep pandas
-
-# Set up streamlit config
-echo "Configuring Streamlit..."
+# Create streamlit config directory if it doesn't exist
 mkdir -p ~/.streamlit
-echo "[server]" > ~/.streamlit/config.toml
-echo "headless = true" >> ~/.streamlit/config.toml
-echo "enableCORS = false" >> ~/.streamlit/config.toml
-echo "enableXsrfProtection = false" >> ~/.streamlit/config.toml
-echo "enableStaticServing = true" >> ~/.streamlit/config.toml
 
-# Define environment variables
-export STREAMLIT_SERVER_ENABLE_STATIC_SERVING=true
-export STREAMLIT_SERVER_HEADLESS=true
+# Create streamlit configuration for production
+cat > ~/.streamlit/config.toml << EOF
+[server]
+headless = true
+enableCORS = false
+enableXsrfProtection = false
+enableStaticServing = true
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#636EFA"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
+textColor = "#262730"
+font = "sans serif"
+
+[runner]
+magicEnabled = true
+fastReruns = true
+EOF
 
 # Get port from environment or use default
-PORT=${PORT:-8501}
-echo "Port set to: $PORT"
+PORT=${PORT:-10000}
+echo "Starting server on port $PORT"
 
-# Start Streamlit with explicit arguments
-echo "Starting Streamlit application..."
-streamlit run streamlit_app.py \
+# Start application with production settings
+exec streamlit run streamlit_app.py \
   --server.port=$PORT \
   --server.address=0.0.0.0 \
   --server.enableCORS=false \

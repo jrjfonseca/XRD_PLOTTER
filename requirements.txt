@@ -3,6 +3,7 @@ numpy==1.24.3
 pandas==2.0.3
 plotly==5.18.0
 scipy==1.10.1
+# Core plotly dependencies to ensure compatibility
 tenacity==8.2.3
 packaging==23.1
 # Optional for plotly image export
