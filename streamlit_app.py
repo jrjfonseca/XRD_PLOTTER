@@ -3,293 +3,172 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import re
+import warnings
 from scipy.signal import savgol_filter
 from io import BytesIO
+from typing import Tuple, List, Dict, Optional, Any, Union
 
-# Set page title and favicon
+# Configure page 
 st.set_page_config(
     page_title="XRD Plotter",
     page_icon="📊",
     layout="wide"
 )
 
-# Try importing scienceplots for publication-quality plots
+# Configuration and constants
+CONFIG = {
+    "DEFAULT_THETA_MIN": 0,
+    "DEFAULT_THETA_MAX": 100,
+    "PADDING": 5,
+    "SUPPORTED_FORMATS": ['txt', 'csv', 'dat', 'xy'],
+    "DEFAULT_DPI": 300,
+    "LABEL_OFFSET_PERCENT": 0.05  # Position labels 5% from the end of visible range
+}
+
+# Try importing optional dependencies
 try:
     import scienceplots
     SCIENCEPLOTS_AVAILABLE = True
 except ImportError:
     SCIENCEPLOTS_AVAILABLE = False
+    warnings.warn("SciencePlots not available. Publication quality styling disabled.")
 
-st.title("XRD Data Plotter")
-st.write("Upload XRD files to visualize, compare, and analyze X-ray diffraction patterns")
+# ===== Data Processing Functions =====
 
-# Function to read XRD data
-def read_xrd_data(file):
-    # Get file extension
+def read_xrd_data(file) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """
+    Parse XRD data from various file formats.
+    
+    Args:
+        file: Uploaded file object
+    
+    Returns:
+        Tuple of (x_data, y_data) as numpy arrays, or (None, None) if parsing fails
+    """
     file_name = file.name.lower()
     
     try:
-        # Handle .xy files (space or tab-separated two-column data)
+        # Handle .xy files (common XRD format)
         if file_name.endswith('.xy'):
-            content = file.getvalue().decode('utf-8')
-            lines = content.split('\n')
-            x_data = []
-            y_data = []
+            return _parse_xy_file(file)
             
-            for line in lines:
-                # Skip comments and empty lines
-                if line.strip() and not line.strip().startswith('#'):
-                    fields = re.split(r'\s+', line.strip())
-                    if len(fields) >= 2:
-                        try:
-                            x_data.append(float(fields[0]))
-                            y_data.append(float(fields[1]))
-                        except ValueError:
-                            pass
-                            
-            if x_data and y_data:
-                return np.array(x_data), np.array(y_data)
-        
-        # Try standard CSV format
+        # Try as CSV
         data = pd.read_csv(file, header=None)
         if data.shape[1] >= 2:
-            return data.iloc[:, 0], data.iloc[:, 1]
+            return data.iloc[:, 0].values, data.iloc[:, 1].values
             
     except Exception:
-        # Fall back to basic text parsing
-        try:
-            content = file.getvalue().decode('utf-8')
-            lines = content.split('\n')
-            x_data = []
-            y_data = []
-            
-            for line in lines:
-                if line.strip() and not line.strip().startswith('#'):
-                    numbers = re.findall(r'[-+]?\d*\.\d+|\d+', line)
-                    if len(numbers) >= 2:
-                        x_data.append(float(numbers[0]))
-                        y_data.append(float(numbers[1]))
-                        
-            if x_data and y_data:
-                return np.array(x_data), np.array(y_data)
-        except:
-            pass
-            
+        pass
+        
+    # Fall back to general text parsing
+    try:
+        content = file.getvalue().decode('utf-8')
+        return _parse_general_text(content)
+    except Exception:
+        st.error(f"Could not parse file: {file.name}")
+        
     return None, None
 
-# Function to normalize data
-def normalize_data(y_data):
-    return (y_data - np.min(y_data)) / (np.max(y_data) - np.min(y_data))
 
-# File uploader
-uploaded_files = st.file_uploader("Upload XRD files", accept_multiple_files=True, type=['txt', 'csv', 'dat', 'xy'])
+def _parse_xy_file(file) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """Parse space/tab-separated XY file format."""
+    content = file.getvalue().decode('utf-8')
+    x_data, y_data = [], []
+    
+    for line in content.split('\n'):
+        if not line.strip() or line.strip().startswith('#'):
+            continue
+            
+        fields = re.split(r'\s+', line.strip())
+        if len(fields) >= 2:
+            try:
+                x_data.append(float(fields[0]))
+                y_data.append(float(fields[1]))
+            except ValueError:
+                continue
+                
+    if not x_data:
+        return None, None
+        
+    return np.array(x_data), np.array(y_data)
 
-if uploaded_files:
-    # Store processed data
-    all_data = []
-    all_processed_data = []
-    all_labels = []
-    all_colors = []
-    all_label_positions = []
+
+def _parse_general_text(content: str) -> Tuple[Optional[np.ndarray], Optional[np.ndarray]]:
+    """Attempt to parse text with numeric data in any reasonable format."""
+    x_data, y_data = [], []
     
-    # Create sidebar for global settings
-    with st.sidebar:
-        st.header("Global Settings")
-        
-        # Plot range settings
-        st.subheader("Plot Range")
-        use_custom_range = st.checkbox("Use custom 2θ range", value=False)
-        
-        if use_custom_range:
-            # Calculate default range from all files
-            min_x_all = float('inf')
-            max_x_all = float('-inf')
+    for line in content.split('\n'):
+        if not line.strip() or line.strip().startswith('#'):
+            continue
             
-            for file in uploaded_files:
-                x_data, _ = read_xrd_data(file)
-                if x_data is not None and len(x_data) > 0:
-                    min_x_all = min(min_x_all, np.min(x_data))
-                    max_x_all = max(max_x_all, np.max(x_data))
+        numbers = re.findall(r'[-+]?\d*\.\d+|\d+', line)
+        if len(numbers) >= 2:
+            x_data.append(float(numbers[0]))
+            y_data.append(float(numbers[1]))
             
-            # Set reasonable defaults
-            if min_x_all == float('inf'):
-                min_x_all, max_x_all = 0, 100
-                
-            # Add padding
-            min_x_all = max(0, min_x_all - 5)
-            max_x_all = max_x_all + 5
-            
-            # Create range inputs
-            col1, col2 = st.columns(2)
-            with col1:
-                min_theta = st.number_input("Min 2θ", value=float(min_x_all), min_value=0.0)
-            with col2:
-                max_theta = st.number_input("Max 2θ", value=float(max_x_all), min_value=min_theta + 1.0)
+    if not x_data:
+        return None, None
         
-        # Legend settings
-        st.subheader("Legend Settings")
-        show_legend = st.checkbox("Show legend", value=True)
+    return np.array(x_data), np.array(y_data)
+
+
+def normalize_data(y_data: np.ndarray) -> np.ndarray:
+    """Scale data to range [0,1]."""
+    y_min, y_max = np.min(y_data), np.max(y_data)
+    if y_max == y_min:
+        return np.zeros_like(y_data)
+    return (y_data - y_min) / (y_max - y_min)
+
+
+def apply_smooth(y_data: np.ndarray, window_size: int) -> np.ndarray:
+    """Apply Savitzky-Golay smoothing with error handling."""
+    if window_size % 2 == 0:
+        window_size += 1  # Ensure odd window size
         
-        if show_legend:
-            legend_options = ["best", "upper right", "upper left", "lower left", "lower right",
-                              "right", "center left", "center right", "lower center", "upper center",
-                              "center", "outside"]
-            legend_position = st.selectbox("Legend position", legend_options, index=0)
-            
-            # Special handling for "outside" position
-            if legend_position == "outside":
-                legend_position = "center left"
-                legend_bbox_to_anchor = (1.05, 0.5)
-            else:
-                legend_bbox_to_anchor = None
-        
-        # Plot style settings
-        st.subheader("Plot Style")
-        use_publication_style = st.checkbox("Use publication quality style", value=False) and SCIENCEPLOTS_AVAILABLE
-        
-        if use_publication_style:
-            science_style = st.selectbox("Science style",
-                                         ["science", "ieee", "nature", "grid"],
-                                         index=0)
-            use_latex = st.checkbox("Use LaTeX for text rendering", value=False)
+    # Handle case where window is larger than data
+    if window_size >= len(y_data):
+        window_size = min(len(y_data) - (1 if len(y_data) % 2 == 0 else 2), 5)
+        if window_size < 3:
+            return y_data  # Not enough points to smooth
     
-    # Process each file
-    for i, file in enumerate(uploaded_files):
-        x_data, y_data = read_xrd_data(file)
-        
-        if x_data is not None and y_data is not None:
-            # Store original data
-            all_data.append({
-                'x': x_data,
-                'y': y_data,
-                'filename': file.name
-            })
+    try:
+        return savgol_filter(y_data.copy(), window_size, 2)
+    except Exception as e:
+        st.warning(f"Smoothing error: {str(e)}")
+        return y_data
+
+
+# ===== Plotting Functions =====
+
+def setup_plot_style(use_publication_style: bool, style_name: str, use_latex: bool) -> None:
+    """Configure plot styling based on user preferences."""
+    if use_publication_style and SCIENCEPLOTS_AVAILABLE:
+        try:
+            plt.style.use(['science', style_name])
             
-            # Create controls for this file
-            with st.expander(f"Controls for {file.name}", expanded=True):
-                col1, col2, col3 = st.columns(3)
-                
-                with col1:
-                    normalize = st.checkbox("Normalize", key=f"norm_{i}")
-                
-                with col2:
-                    label = st.text_input("Label", value=file.name, key=f"label_{i}")
-                
-                with col3:
-                    y_offset = st.number_input("Y-offset", min_value=0.0, max_value=100.0, value=0.0, step=0.5, key=f"offset_{i}")
-                
-                color = st.color_picker("Color", key=f"color_{i}")
-                all_colors.append(color)
-                
-                # Apply smoothing if requested
-                if st.checkbox("Apply smoothing", key=f"smooth_{i}"):
-                    window = st.slider("Smoothing window", 3, 51, 5, 2, key=f"window_{i}")
-                    y_data_processed = savgol_filter(y_data.copy(), window, 2)
-                else:
-                    y_data_processed = y_data.copy()
-                
-                # Normalize if requested
-                if normalize:
-                    y_data_processed = normalize_data(y_data_processed)
-                
-                # Apply offset
-                y_data_processed = y_data_processed + y_offset
-                
-                # Label positioning
-                st.subheader("Label Position")
-                show_label = st.checkbox("Show label on plot", value=True, key=f"show_label_{i}")
-                
-                if show_label:
-                    # Calculate default position (right side of visible range)
-                    if use_custom_range:
-                        mask = (x_data >= min_theta) & (x_data <= max_theta)
-                        x_range = x_data[mask] if any(mask) else x_data
-                        y_range = y_data_processed[mask] if any(mask) else y_data_processed
-                        max_x = max_theta - (max_theta - min_theta) * 0.05  # 95% of the way to the right edge
-                    else:
-                        if len(x_data) > 0:
-                            x_max = np.max(x_data)
-                            x_min = np.min(x_data)
-                            max_x = x_max - (x_max - x_min) * 0.05
-                        else:
-                            max_x = 0
-                    
-                    # Find y-value at this x position
-                    default_y = 0
-                    if len(x_data) > 0 and len(y_data_processed) > 0:
-                        x_visible = x_data
-                        y_visible = y_data_processed
-                        
-                        if use_custom_range:
-                            mask = (x_data >= min_theta) & (x_data <= max_theta)
-                            x_visible = x_data[mask] if any(mask) else x_data
-                            y_visible = y_data_processed[mask] if any(mask) else y_data_processed
-                        
-                        if len(x_visible) > 0:
-                            nearest_idx = np.abs(x_visible - max_x).argmin()
-                            default_y = y_visible[nearest_idx]
-                    
-                    # Position inputs
-                    label_col1, label_col2 = st.columns(2)
-                    
-                    with label_col1:
-                        x_pos = st.number_input(
-                            "X Position",
-                            value=float(max_x),
-                            min_value=float(min_theta) if use_custom_range else float(np.min(x_data)) if len(x_data) > 0 else 0.0,
-                            max_value=float(max_theta) if use_custom_range else float(np.max(x_data)) if len(x_data) > 0 else 100.0,
-                            key=f"label_x_{i}"
-                        )
-                    
-                    with label_col2:
-                        y_pos = st.number_input(
-                            "Y Position",
-                            value=float(default_y),
-                            key=f"label_y_{i}"
-                        )
-                    
-                    # Store label information
-                    all_label_positions.append({
-                        'x': x_pos,
-                        'y': y_pos,
-                        'text': label,
-                        'color': color,
-                        'show': True
-                    })
-                else:
-                    all_label_positions.append({
-                        'show': False,
-                        'text': label,
-                        'color': color
-                    })
-                
-                # Store processed data
-                all_processed_data.append({
-                    'x': x_data,
-                    'y': y_data_processed,
-                    'label': label,
-                    'color': color
+            if use_latex:
+                plt.rcParams.update({
+                    "text.usetex": True,
+                    "font.family": "serif",
+                    "font.serif": ["Computer Modern Roman"],
                 })
-                
-                all_labels.append(label)
-    
-    # Apply publication-quality styles if requested
-    if use_publication_style:
-        plt.style.use(['science', science_style])
-        
-        if use_latex:
-            plt.rcParams.update({
-                "text.usetex": True,
-                "font.family": "serif",
-                "font.serif": ["Computer Modern Roman"],
-            })
-    
-    # Create figure
+        except Exception as e:
+            st.warning(f"Style application failed: {str(e)}")
+
+
+def create_figure_with_data(
+    processed_data: List[Dict[str, Any]],
+    label_positions: List[Dict[str, Any]],
+    plot_config: Dict[str, Any]
+) -> plt.Figure:
+    """Create and configure a matplotlib figure with the dataset."""
     fig, ax = plt.subplots(figsize=(10, 6))
     
     # Plot each dataset
-    for i, data in enumerate(all_processed_data):
-        if use_custom_range:
+    for i, data in enumerate(processed_data):
+        if plot_config.get('use_custom_range', False):
+            min_theta = plot_config['min_theta']
+            max_theta = plot_config['max_theta']
             mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
             x_plot = data['x'][mask]
             y_plot = data['y'][mask]
@@ -300,8 +179,8 @@ if uploaded_files:
         ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
     
     # Add custom labels
-    for label_info in all_label_positions:
-        if label_info['show']:
+    for label_info in label_positions:
+        if label_info.get('show', False):
             ax.text(
                 label_info['x'],
                 label_info['y'],
@@ -312,120 +191,372 @@ if uploaded_files:
                 fontweight='bold'
             )
     
-    # Customize plot
-    if use_latex:
+    # Configure axes
+    if plot_config.get('use_latex', False):
         ax.set_xlabel(r"$2\theta$ (degrees)")
     else:
         ax.set_xlabel("2$\theta$ (degrees)")
     
     ax.set_ylabel("Intensity (a.u.)")
     
-    # Set axis limits
-    if use_custom_range:
-        ax.set_xlim(min_theta, max_theta)
+    # Set axis limits if needed
+    if plot_config.get('use_custom_range', False):
+        ax.set_xlim(plot_config['min_theta'], plot_config['max_theta'])
     
     ax.grid(True, alpha=0.3)
     
-    # Add legend
-    if show_legend:
-        if legend_bbox_to_anchor:
-            ax.legend(loc=legend_position, bbox_to_anchor=legend_bbox_to_anchor)
+    # Add legend if requested
+    if plot_config.get('show_legend', True):
+        bbox_to_anchor = plot_config.get('legend_bbox_to_anchor')
+        if bbox_to_anchor:
+            ax.legend(loc=plot_config['legend_position'], bbox_to_anchor=bbox_to_anchor)
         else:
-            ax.legend(loc=legend_position)
+            ax.legend(loc=plot_config['legend_position'])
     
-    # Display plot
-    st.pyplot(fig)
+    return fig
+
+
+def export_figure(
+    processed_data: List[Dict[str, Any]],
+    label_positions: List[Dict[str, Any]],
+    plot_config: Dict[str, Any],
+    width: float,
+    height: float
+) -> Tuple[BytesIO, Optional[BytesIO]]:
+    """Create high-quality figure for export and return buffers."""
+    # Create figure with settings for export
+    save_fig = plt.figure(figsize=(width, height))
+    save_ax = save_fig.add_subplot(111)
     
-    # Export options
+    # Plot each dataset
+    for data in processed_data:
+        if plot_config.get('use_custom_range', False):
+            min_theta = plot_config['min_theta']
+            max_theta = plot_config['max_theta']
+            mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
+            x_plot = data['x'][mask]
+            y_plot = data['y'][mask]
+        else:
+            x_plot = data['x']
+            y_plot = data['y']
+        
+        save_ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
+    
+    # Add custom labels
+    for label_info in label_positions:
+        if label_info.get('show', False):
+            save_ax.text(
+                label_info['x'],
+                label_info['y'],
+                label_info['text'],
+                color=label_info['color'],
+                ha='right',
+                va='center',
+                fontweight='bold'
+            )
+    
+    # Configure axes
+    if plot_config.get('use_latex', False):
+        save_ax.set_xlabel(r"$2\theta$ (degrees)")
+    else:
+        save_ax.set_xlabel("2$\theta$ (degrees)")
+    
+    save_ax.set_ylabel("Intensity (a.u.)")
+    
+    # Set axis limits if needed
+    if plot_config.get('use_custom_range', False):
+        save_ax.set_xlim(plot_config['min_theta'], plot_config['max_theta'])
+    
+    save_ax.grid(True, alpha=0.3)
+    
+    # Add legend if requested
+    if plot_config.get('show_legend', True):
+        bbox_to_anchor = plot_config.get('legend_bbox_to_anchor')
+        if bbox_to_anchor:
+            save_ax.legend(loc=plot_config['legend_position'], bbox_to_anchor=bbox_to_anchor)
+        else:
+            save_ax.legend(loc=plot_config['legend_position'])
+    
+    # Create PNG buffer
+    png_buf = BytesIO()
+    save_fig.savefig(png_buf, format="png", dpi=CONFIG["DEFAULT_DPI"], bbox_inches="tight")
+    png_buf.seek(0)
+    
+    # Try PDF export
+    pdf_buf = None
+    try:
+        pdf_buf = BytesIO()
+        save_fig.savefig(pdf_buf, format="pdf", bbox_inches="tight")
+        pdf_buf.seek(0)
+    except Exception:
+        pass
+        
+    plt.close(save_fig)
+    return png_buf, pdf_buf
+
+
+def get_data_range(files) -> Tuple[float, float]:
+    """Calculate the data range from all uploaded files."""
+    min_x, max_x = float('inf'), float('-inf')
+    
+    for file in files:
+        x_data, _ = read_xrd_data(file)
+        if x_data is not None and len(x_data) > 0:
+            min_x = min(min_x, np.min(x_data))
+            max_x = max(max_x, np.max(x_data))
+    
+    # Set reasonable defaults if no range found
+    if min_x == float('inf'):
+        min_x, max_x = CONFIG["DEFAULT_THETA_MIN"], CONFIG["DEFAULT_THETA_MAX"]
+    
+    # Add padding
+    min_x = max(0, min_x - CONFIG["PADDING"])
+    max_x = max_x + CONFIG["PADDING"]
+    
+    return min_x, max_x
+
+
+def find_label_position(x_data, y_data, is_custom_range, min_theta=None, max_theta=None):
+    """Find appropriate default position for spectrum label."""
+    if not len(x_data) or not len(y_data):
+        return 0, 0
+        
+    if is_custom_range and min_theta is not None and max_theta is not None:
+        mask = (x_data >= min_theta) & (x_data <= max_theta)
+        x_visible = x_data[mask] if any(mask) else x_data
+        y_visible = y_data[mask] if any(mask) else y_data
+        
+        if len(x_visible) == 0:
+            return max_theta, 0
+            
+        max_x = max_theta - (max_theta - min_theta) * CONFIG["LABEL_OFFSET_PERCENT"]
+    else:
+        if len(x_data) == 0:
+            return 0, 0
+            
+        x_min = np.min(x_data)
+        x_max = np.max(x_data)
+        max_x = x_max - (x_max - x_min) * CONFIG["LABEL_OFFSET_PERCENT"]
+    
+    # Find closest y-value to the chosen x-position
+    x_visible = x_data
+    y_visible = y_data
+    
+    if is_custom_range and min_theta is not None and max_theta is not None:
+        mask = (x_data >= min_theta) & (x_data <= max_theta)
+        if any(mask):
+            x_visible = x_data[mask]
+            y_visible = y_data[mask]
+    
+    if len(x_visible) > 0:
+        nearest_idx = np.abs(x_visible - max_x).argmin()
+        default_y = y_visible[nearest_idx]
+        return max_x, default_y
+    
+    return max_x, 0
+
+
+# ===== UI Components =====
+
+def render_sidebar_controls():
+    """Render the sidebar controls and return configuration."""
+    plot_config = {}
+    
+    with st.sidebar:
+        st.header("Global Settings")
+        
+        # Plot range settings
+        st.subheader("Plot Range")
+        plot_config['use_custom_range'] = st.checkbox("Use custom 2θ range", value=False)
+        
+        # These values will be set by the caller if needed
+        plot_config['min_theta'] = None
+        plot_config['max_theta'] = None
+        
+        # Legend settings
+        st.subheader("Legend Settings")
+        plot_config['show_legend'] = st.checkbox("Show legend", value=True)
+        
+        if plot_config['show_legend']:
+            legend_options = ["best", "upper right", "upper left", "lower left", "lower right",
+                             "right", "center left", "center right", "lower center", "upper center",
+                             "center", "outside"]
+            plot_config['legend_position'] = st.selectbox("Legend position", legend_options, index=0)
+            
+            # Special handling for "outside" position
+            if plot_config['legend_position'] == "outside":
+                plot_config['legend_position'] = "center left"
+                plot_config['legend_bbox_to_anchor'] = (1.05, 0.5)
+            else:
+                plot_config['legend_bbox_to_anchor'] = None
+        
+        # Plot style settings
+        st.subheader("Plot Style")
+        can_use_pub_style = SCIENCEPLOTS_AVAILABLE
+        plot_config['use_publication_style'] = st.checkbox(
+            "Use publication quality style", 
+            value=False, 
+            disabled=not can_use_pub_style,
+            help="Requires SciencePlots package" if not can_use_pub_style else None
+        )
+        
+        if plot_config['use_publication_style']:
+            plot_config['science_style'] = st.selectbox(
+                "Science style",
+                ["science", "ieee", "nature", "grid"],
+                index=0
+            )
+            plot_config['use_latex'] = st.checkbox("Use LaTeX for text rendering", value=False)
+    
+    return plot_config
+
+
+def render_file_controls(file, idx, use_custom_range, min_theta=None, max_theta=None):
+    """Render controls for a single file and return the processed data."""
+    x_data, y_data = read_xrd_data(file)
+    
+    if x_data is None or y_data is None:
+        st.error(f"Could not read data from {file.name}")
+        return None, None, None
+    
+    # Store original data
+    original_data = {
+        'x': x_data,
+        'y': y_data,
+        'filename': file.name
+    }
+    
+    file_config = {}
+    label_info = {}
+    
+    # Create controls for this file
+    with st.expander(f"Controls for {file.name}", expanded=True):
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            file_config['normalize'] = st.checkbox("Normalize", key=f"norm_{idx}")
+        
+        with col2:
+            file_config['label'] = st.text_input("Label", value=file.name, key=f"label_{idx}")
+        
+        with col3:
+            file_config['y_offset'] = st.number_input(
+                "Y-offset", 
+                min_value=0.0, 
+                max_value=100.0, 
+                value=0.0, 
+                step=0.5, 
+                key=f"offset_{idx}"
+            )
+        
+        file_config['color'] = st.color_picker("Color", key=f"color_{idx}")
+        
+        # Apply smoothing if requested
+        file_config['apply_smooth'] = st.checkbox("Apply smoothing", key=f"smooth_{idx}")
+        if file_config['apply_smooth']:
+            file_config['window_size'] = st.slider(
+                "Smoothing window", 
+                3, 51, 5, 2, 
+                key=f"window_{idx}"
+            )
+            y_processed = apply_smooth(y_data.copy(), file_config['window_size'])
+        else:
+            y_processed = y_data.copy()
+        
+        # Normalize if requested
+        if file_config['normalize']:
+            y_processed = normalize_data(y_processed)
+        
+        # Apply offset
+        y_processed = y_processed + file_config['y_offset']
+        
+        # Label positioning
+        st.subheader("Label Position")
+        label_info['show'] = st.checkbox("Show label on plot", value=True, key=f"show_label_{idx}")
+        
+        if label_info['show']:
+            # Get default positions
+            default_x, default_y = find_label_position(
+                x_data, y_processed, use_custom_range, min_theta, max_theta
+            )
+            
+            # Position inputs
+            label_col1, label_col2 = st.columns(2)
+            
+            with label_col1:
+                min_x_value = float(min_theta) if use_custom_range else float(np.min(x_data)) if len(x_data) > 0 else 0.0
+                max_x_value = float(max_theta) if use_custom_range else float(np.max(x_data)) if len(x_data) > 0 else 100.0
+                
+                label_info['x'] = st.number_input(
+                    "X Position",
+                    value=float(default_x),
+                    min_value=min_x_value,
+                    max_value=max_x_value,
+                    key=f"label_x_{idx}"
+                )
+            
+            with label_col2:
+                label_info['y'] = st.number_input(
+                    "Y Position",
+                    value=float(default_y),
+                    key=f"label_y_{idx}"
+                )
+            
+            # Store other label information
+            label_info['text'] = file_config['label']
+            label_info['color'] = file_config['color']
+        
+        # Create processed data record
+        processed_data = {
+            'x': x_data,
+            'y': y_processed,
+            'label': file_config['label'],
+            'color': file_config['color']
+        }
+    
+    return original_data, processed_data, label_info
+
+
+def render_export_controls(processed_data, label_positions, plot_config):
+    """Render export controls for saving figures and data."""
     col1, col2 = st.columns(2)
     
     with col1:
         if st.button("Save Figure"):
-            # Create high-quality figure for saving
-            dpi = 300
+            # Get figure dimensions
             width = st.sidebar.number_input("Width (inches)", value=8.0, min_value=1.0, max_value=20.0)
             height = st.sidebar.number_input("Height (inches)", value=6.0, min_value=1.0, max_value=20.0)
             
-            # Create a new figure with the specified dimensions
-            save_fig, save_ax = plt.subplots(figsize=(width, height))
+            # Generate export figure
+            png_buf, pdf_buf = export_figure(
+                processed_data,
+                label_positions,
+                plot_config,
+                width,
+                height
+            )
             
-            # Recreate the plot
-            for i, data in enumerate(all_processed_data):
-                if use_custom_range:
-                    mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
-                    x_plot = data['x'][mask]
-                    y_plot = data['y'][mask]
-                else:
-                    x_plot = data['x']
-                    y_plot = data['y']
-                
-                save_ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
-            
-            # Add custom labels
-            for label_info in all_label_positions:
-                if label_info['show']:
-                    save_ax.text(
-                        label_info['x'],
-                        label_info['y'],
-                        label_info['text'],
-                        color=label_info['color'],
-                        ha='right',
-                        va='center',
-                        fontweight='bold'
-                    )
-            
-            # Customize plot
-            if use_latex:
-                save_ax.set_xlabel(r"$2\theta$ (degrees)")
-            else:
-                save_ax.set_xlabel("2$\theta$ (degrees)")
-            
-            save_ax.set_ylabel("Intensity (a.u.)")
-            
-            if use_custom_range:
-                save_ax.set_xlim(min_theta, max_theta)
-            
-            save_ax.grid(True, alpha=0.3)
-            
-            # Add legend
-            if show_legend:
-                if legend_bbox_to_anchor:
-                    save_ax.legend(loc=legend_position, bbox_to_anchor=legend_bbox_to_anchor)
-                else:
-                    save_ax.legend(loc=legend_position)
-            
-            # Save and offer download
-            buf = BytesIO()
-            save_fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight")
-            buf.seek(0)
-            
+            # Offer downloads
             st.download_button(
                 label="Download PNG",
-                data=buf,
+                data=png_buf,
                 file_name="xrd_plot.png",
                 mime="image/png"
             )
             
-            # Try PDF as well
-            try:
-                buf_pdf = BytesIO()
-                save_fig.savefig(buf_pdf, format="pdf", bbox_inches="tight")
-                buf_pdf.seek(0)
-                
+            if pdf_buf:
                 st.download_button(
                     label="Download PDF",
-                    data=buf_pdf,
+                    data=pdf_buf,
                     file_name="xrd_plot.pdf",
                     mime="application/pdf"
                 )
-            except:
-                st.warning("PDF export is not available in this environment.")
-            
-            plt.close(save_fig)
+            else:
+                st.warning("PDF export failed. Try a different configuration.")
     
     with col2:
         if st.button("Export Data"):
-            for data in all_processed_data:
+            for data in processed_data:
                 df = pd.DataFrame({
                     '2θ': data['x'],
                     'Intensity': data['y']
@@ -436,10 +567,10 @@ if uploaded_files:
                     file_name=f"{data['label']}.csv",
                     mime="text/csv"
                 )
-else:
-    st.info("Please upload XRD data files to begin plotting.")
-    
-    # Tutorial
+
+
+def render_tutorial():
+    """Render the tutorial section."""
     with st.expander("How to use this app", expanded=True):
         st.markdown("""
         ### XRD Plotter Usage Guide
@@ -460,8 +591,86 @@ else:
         Try it now by uploading your XRD data files!
         """)
 
+
+# ===== Main Application =====
+
+def main():
+    st.title("XRD Data Plotter")
+    st.write("Upload XRD files to visualize, compare, and analyze X-ray diffraction patterns")
+    
+    # File uploader
+    uploaded_files = st.file_uploader(
+        "Upload XRD files", 
+        accept_multiple_files=True, 
+        type=CONFIG["SUPPORTED_FORMATS"]
+    )
+    
+    if not uploaded_files:
+        render_tutorial()
+        return
+    
+    # Render sidebar and get plot configuration
+    plot_config = render_sidebar_controls()
+    
+    # Calculate data range if needed
+    if plot_config['use_custom_range']:
+        min_x, max_x = get_data_range(uploaded_files)
+        
+        # Create range inputs
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            plot_config['min_theta'] = st.number_input("Min 2θ", value=min_x, min_value=0.0)
+        with col2:
+            plot_config['max_theta'] = st.number_input(
+                "Max 2θ", 
+                value=max_x, 
+                min_value=plot_config['min_theta'] + 1.0
+            )
+    
+    # Process files
+    all_data = []
+    all_processed_data = []
+    all_label_positions = []
+    
+    for i, file in enumerate(uploaded_files):
+        original_data, processed_data, label_info = render_file_controls(
+            file, 
+            i, 
+            plot_config['use_custom_range'],
+            plot_config.get('min_theta'),
+            plot_config.get('max_theta')
+        )
+        
+        if original_data and processed_data:
+            all_data.append(original_data)
+            all_processed_data.append(processed_data)
+            all_label_positions.append(label_info)
+    
+    if not all_processed_data:
+        st.error("No valid data files were uploaded. Please check your files.")
+        return
+    
+    # Apply plot styles
+    setup_plot_style(
+        plot_config.get('use_publication_style', False),
+        plot_config.get('science_style', 'science'),
+        plot_config.get('use_latex', False)
+    )
+    
+    # Create and display the plot
+    fig = create_figure_with_data(all_processed_data, all_label_positions, plot_config)
+    st.pyplot(fig)
+    
+    # Export controls
+    render_export_controls(all_processed_data, all_label_positions, plot_config)
+
+
 # Add footer with attribution
 st.markdown("""
 ---
 Made with [Streamlit](https://streamlit.io) • [GitHub Repository](https://github.com/jrjfonseca/XRD_PLOTTER)
-""") 
+""")
+
+# Run the application
+if __name__ == "__main__":
+    main() 
