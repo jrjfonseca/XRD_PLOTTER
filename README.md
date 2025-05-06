@@ -1,73 +1,59 @@
 # XRD Plotter
 
-A Streamlit application for visualizing and analyzing XRD (X-ray Diffraction) data.
+Interactive X-ray Diffraction (XRD) data visualization tool built with Streamlit.
 
 ## Features
 
-- Load multiple XRD data files
-- Normalize spectra
-- Customize labels and colors
-- Position labels directly on the plot above spectral lines
-- Adjust Y-offset for better visualization
-- Control the 2θ degree range to display
-- Custom legend positioning
-- Publication-quality plotting using SciencePlots
-- Apply smoothing to the data
-- Export processed data
-- Interactive plot with legend
+- Upload and visualize multiple XRD files
+- Normalize and smooth data
+- Adjust vertical offsets for better comparison
+- Customize colors and labels
+- Interactive zoom, pan, and hover
+- Export data and interactive plots
 
-## Installation
+## Deployment on Render.com
 
-1. Create the conda environment:
+### Automatic Deployment
+
+1. Fork or clone this repository
+2. Sign up for [Render.com](https://render.com/)
+3. Create a new Web Service
+4. Connect your GitHub repository
+5. Render will automatically detect the configuration from `render.yaml`
+6. Click "Create Web Service"
+
+### Manual Configuration
+
+If you need to configure the service manually:
+
+- **Environment**: Python
+- **Build Command**: `pip install -r requirements.txt && chmod +x start.sh`
+- **Start Command**: `./start.sh`
+- **Python Version**: 3.9.12
+
+## Local Development
+
 ```bash
-conda env create -f environment.yml
+# Clone the repository
+git clone https://github.com/jrjfonseca/XRD_PLOTTER.git
+cd XRD_PLOTTER
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Run the app
+streamlit run streamlit_app.py
 ```
 
-2. Activate the environment:
-```bash
-conda activate xrd_plotter
-```
+## Troubleshooting
 
-## Usage
+If you encounter issues with the deployment:
 
-1. Start the Streamlit application:
-```bash
-streamlit run app.py
-```
+1. Check the Render logs for specific error messages
+2. Ensure all dependencies are properly installed
+3. Try deploying with a different Python version if needed
+4. For static file issues, ensure the Streamlit configuration is correct
 
-2. Open your web browser and navigate to the URL shown in the terminal (typically http://localhost:8501)
+## License
 
-3. Upload your XRD data files (supported formats: .txt, .csv, .dat, .xy)
-
-4. Use the controls to:
-   - Normalize the data
-   - Add custom labels
-   - Adjust Y-offset
-   - Change colors
-   - Apply smoothing
-   - Position labels directly on the plot with custom alignment
-   - Export processed data
-
-5. Use the sidebar to:
-   - Set custom 2θ range for the plot
-   - Position the legend anywhere in the plot
-   - Enable publication-quality plots using SciencePlots
-   - Select different scientific plotting styles
-
-6. Additional features:
-   - Save high-resolution figures in PNG and PDF formats
-   - Export processed data as CSV files
-
-## Data Format
-
-The application accepts XRD data in various formats:
-- .xy files (standard XRD data format, typically space or tab-separated values)
-- CSV files with two columns (2θ and intensity)
-- Text files with space or tab-separated values
-- Files with two columns of numerical data
-
-The application will automatically detect and parse the file format, ignoring comment lines (starting with '#') and handling different separators.
-
-## Requirements
-
-All required packages are listed in the `environment.yml` file and will be installed automatically when creating the conda environment. 
+MIT 
