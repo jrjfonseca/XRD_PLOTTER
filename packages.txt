@@ -1,7 +1,1 @@
-libgl1-mesa-glx
-libglib2.0-0
-python3-dev
-libjpeg-dev
-libfreetype6-dev
-build-essential
-libopenblas-dev 
+libopenblas-dev

@@ -1,6 +1,9 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
 import re
 import warnings
 from io import BytesIO
@@ -19,22 +22,11 @@ CONFIG = {
     "DEFAULT_THETA_MAX": 100,
     "PADDING": 5,
     "SUPPORTED_FORMATS": ['txt', 'csv', 'dat', 'xy'],
-    "DEFAULT_DPI": 300,
     "LABEL_OFFSET_PERCENT": 0.05,  # Position labels 5% from the end of visible range
-    "FALLBACK_MODE": False
+    "COLORS": px.colors.qualitative.Plotly  # Default color palette
 }
 
-# Try importing optional dependencies with fallbacks
-try:
-    import matplotlib
-    matplotlib.use('Agg')  # Force Agg backend which works better in headless environments
-    import matplotlib.pyplot as plt
-    MATPLOTLIB_AVAILABLE = True
-except ImportError:
-    MATPLOTLIB_AVAILABLE = False
-    CONFIG["FALLBACK_MODE"] = True
-    warnings.warn("Matplotlib not available. Using simplified plotting mode.")
-
+# Check for SciPy availability
 try:
     from scipy.signal import savgol_filter
     SCIPY_AVAILABLE = True
@@ -46,13 +38,6 @@ except ImportError:
     def savgol_filter(data, window_length, polyorder, **kwargs):
         """Dummy function when scipy is not available."""
         return data
-
-try:
-    import scienceplots
-    SCIENCEPLOTS_AVAILABLE = True
-except ImportError:
-    SCIENCEPLOTS_AVAILABLE = False
-    warnings.warn("SciencePlots not available. Publication quality styling disabled.")
 
 # ===== Data Processing Functions =====
 
@@ -165,38 +150,18 @@ def apply_smooth(y_data: np.ndarray, window_size: int) -> np.ndarray:
 
 # ===== Plotting Functions =====
 
-def setup_plot_style(use_publication_style: bool, style_name: str, use_latex: bool) -> None:
-    """Configure plot styling based on user preferences."""
-    if not MATPLOTLIB_AVAILABLE:
-        return
-        
-    if use_publication_style and SCIENCEPLOTS_AVAILABLE:
-        try:
-            plt.style.use(['science', style_name])
-            
-            if use_latex:
-                plt.rcParams.update({
-                    "text.usetex": True,
-                    "font.family": "serif",
-                    "font.serif": ["Computer Modern Roman"],
-                })
-        except Exception as e:
-            st.warning(f"Style application failed: {str(e)}")
-
-
-def create_figure_with_data(
+def create_interactive_plot(
     processed_data: List[Dict[str, Any]],
     label_positions: List[Dict[str, Any]],
     plot_config: Dict[str, Any]
-) -> Any:
-    """Create and configure a matplotlib figure with the dataset."""
-    if not MATPLOTLIB_AVAILABLE:
-        return create_fallback_chart(processed_data, label_positions, plot_config)
-        
-    fig, ax = plt.subplots(figsize=(10, 6))
+) -> go.Figure:
+    """Create an interactive Plotly figure with the processed data."""
+    # Create the figure
+    fig = go.Figure()
     
-    # Plot each dataset
+    # Add each dataset as a trace
     for i, data in enumerate(processed_data):
+        # Apply custom range if needed
         if plot_config.get('use_custom_range', False):
             min_theta = plot_config['min_theta']
             max_theta = plot_config['max_theta']
@@ -207,204 +172,97 @@ def create_figure_with_data(
             x_plot = data['x']
             y_plot = data['y']
         
-        ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
+        # Add the line to the plot
+        fig.add_trace(go.Scatter(
+            x=x_plot, 
+            y=y_plot,
+            mode='lines',
+            name=data['label'],
+            line=dict(color=data['color'], width=2)
+        ))
     
-    # Add custom labels
+    # Add custom labels as annotations
+    annotations = []
     for label_info in label_positions:
         if label_info.get('show', False):
-            ax.text(
-                label_info['x'],
-                label_info['y'],
-                label_info['text'],
-                color=label_info['color'],
-                ha='right',
-                va='center',
-                fontweight='bold'
-            )
+            annotations.append(dict(
+                x=label_info['x'],
+                y=label_info['y'],
+                text=label_info['text'],
+                showarrow=False,
+                font=dict(
+                    color=label_info['color'],
+                    size=12,
+                    family="Arial"
+                ),
+                xanchor='right',
+                yanchor='middle'
+            ))
     
-    # Configure axes
-    if plot_config.get('use_latex', False):
-        ax.set_xlabel(r"$2\theta$ (degrees)")
-    else:
-        ax.set_xlabel("2$\theta$ (degrees)")
+    # Add the annotations to the figure
+    fig.update_layout(annotations=annotations)
     
-    ax.set_ylabel("Intensity (a.u.)")
+    # Configure layout
+    fig.update_layout(
+        title=None,
+        xaxis_title='2θ (degrees)',
+        yaxis_title='Intensity (a.u.)',
+        template='plotly_white',
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1
+        ) if plot_config.get('show_legend', True) else dict(visible=False),
+        margin=dict(l=50, r=50, t=50, b=50),
+        hovermode='closest'
+    )
     
-    # Set axis limits if needed
+    # Add grid
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(211,211,211,0.3)')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(211,211,211,0.3)')
+    
+    # Set axis limits if custom range is specified
     if plot_config.get('use_custom_range', False):
-        ax.set_xlim(plot_config['min_theta'], plot_config['max_theta'])
+        fig.update_xaxes(range=[plot_config['min_theta'], plot_config['max_theta']])
     
-    ax.grid(True, alpha=0.3)
-    
-    # Add legend if requested
-    if plot_config.get('show_legend', True):
-        bbox_to_anchor = plot_config.get('legend_bbox_to_anchor')
-        if bbox_to_anchor:
-            ax.legend(loc=plot_config['legend_position'], bbox_to_anchor=bbox_to_anchor)
-        else:
-            ax.legend(loc=plot_config['legend_position'])
+    # Apply theme
+    if plot_config.get('use_dark_theme', False):
+        fig.update_layout(
+            template='plotly_dark',
+            plot_bgcolor='rgba(50, 50, 50, 1)',
+            paper_bgcolor='rgba(50, 50, 50, 1)',
+            font=dict(color='white')
+        )
     
     return fig
 
 
-def create_fallback_chart(
-    processed_data: List[Dict[str, Any]],
-    label_positions: List[Dict[str, Any]],
-    plot_config: Dict[str, Any]
-) -> None:
-    """Create a chart using Streamlit's native charting when matplotlib is unavailable."""
-    # Convert the data into a format suitable for Streamlit
-    chart_data = []
-    
-    for data in processed_data:
-        if plot_config.get('use_custom_range', False):
-            min_theta = plot_config['min_theta']
-            max_theta = plot_config['max_theta']
-            mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
-            x = data['x'][mask]
-            y = data['y'][mask]
-        else:
-            x = data['x']
-            y = data['y']
-            
-        # Create DataFrame for this dataset
-        df = pd.DataFrame({
-            '2θ': x,
-            data['label']: y
-        })
-        chart_data.append((df, data['color']))
-    
-    # Display using Streamlit's line chart
-    st.subheader("XRD Data Plot (Fallback Mode)")
-    st.write("*Note: Using simplified plotting due to matplotlib unavailability.*")
-    
-    # Create a chart for each dataset (Streamlit doesn't support multiple lines with different colors easily)
-    for df, color in chart_data:
-        st.line_chart(df.set_index('2θ'), use_container_width=True)
-    
-    # Show label positions in a table
-    if any(label.get('show', False) for label in label_positions):
-        st.subheader("Label Positions")
-        labels_df = pd.DataFrame([
-            {
-                "Label": label['text'],
-                "X Position (2θ)": label['x'],
-                "Y Position (Intensity)": label['y']
-            }
-            for label in label_positions if label.get('show', False)
-        ])
-        if not labels_df.empty:
-            st.dataframe(labels_df)
-    
-    # No return needed as we're directly rendering to Streamlit
-
-
-def export_figure(
-    processed_data: List[Dict[str, Any]],
-    label_positions: List[Dict[str, Any]],
-    plot_config: Dict[str, Any],
-    width: float,
-    height: float
-) -> Tuple[Optional[BytesIO], Optional[BytesIO]]:
-    """Create high-quality figure for export and return buffers."""
-    if not MATPLOTLIB_AVAILABLE:
-        st.error("Export functionality not available without matplotlib")
-        return None, None
-        
+def export_figure_as_image(
+    fig: go.Figure,
+    format: str = 'png',
+    width: int = 800,
+    height: int = 600,
+    scale: int = 2
+) -> Optional[BytesIO]:
+    """Export a Plotly figure as an image."""
     try:
-        # Create figure with settings for export
-        save_fig = plt.figure(figsize=(width, height))
-        save_ax = save_fig.add_subplot(111)
-        
-        # Plot each dataset
-        for data in processed_data:
-            if plot_config.get('use_custom_range', False):
-                min_theta = plot_config['min_theta']
-                max_theta = plot_config['max_theta']
-                mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
-                x_plot = data['x'][mask]
-                y_plot = data['y'][mask]
-            else:
-                x_plot = data['x']
-                y_plot = data['y']
-            
-            save_ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
-        
-        # Add custom labels
-        for label_info in label_positions:
-            if label_info.get('show', False):
-                save_ax.text(
-                    label_info['x'],
-                    label_info['y'],
-                    label_info['text'],
-                    color=label_info['color'],
-                    ha='right',
-                    va='center',
-                    fontweight='bold'
-                )
-        
-        # Configure axes
-        if plot_config.get('use_latex', False):
-            save_ax.set_xlabel(r"$2\theta$ (degrees)")
-        else:
-            save_ax.set_xlabel("2$\theta$ (degrees)")
-        
-        save_ax.set_ylabel("Intensity (a.u.)")
-        
-        # Set axis limits if needed
-        if plot_config.get('use_custom_range', False):
-            save_ax.set_xlim(plot_config['min_theta'], plot_config['max_theta'])
-        
-        save_ax.grid(True, alpha=0.3)
-        
-        # Add legend if requested
-        if plot_config.get('show_legend', True):
-            bbox_to_anchor = plot_config.get('legend_bbox_to_anchor')
-            if bbox_to_anchor:
-                save_ax.legend(loc=plot_config['legend_position'], bbox_to_anchor=bbox_to_anchor)
-            else:
-                save_ax.legend(loc=plot_config['legend_position'])
-        
-        # Create PNG buffer
-        png_buf = BytesIO()
-        save_fig.savefig(png_buf, format="png", dpi=CONFIG["DEFAULT_DPI"], bbox_inches="tight")
-        png_buf.seek(0)
-        
-        # Try PDF export
-        pdf_buf = None
-        try:
-            pdf_buf = BytesIO()
-            save_fig.savefig(pdf_buf, format="pdf", bbox_inches="tight")
-            pdf_buf.seek(0)
-        except Exception:
-            pass
-            
-        plt.close(save_fig)
-        return png_buf, pdf_buf
+        buf = BytesIO()
+        fig.write_image(
+            buf, 
+            format=format, 
+            width=width, 
+            height=height, 
+            scale=scale,
+            engine="kaleido"
+        )
+        buf.seek(0)
+        return buf
     except Exception as e:
-        st.error(f"Error creating export: {str(e)}")
-        return None, None
-
-
-def get_data_range(files) -> Tuple[float, float]:
-    """Calculate the data range from all uploaded files."""
-    min_x, max_x = float('inf'), float('-inf')
-    
-    for file in files:
-        x_data, _ = read_xrd_data(file)
-        if x_data is not None and len(x_data) > 0:
-            min_x = min(min_x, np.min(x_data))
-            max_x = max(max_x, np.max(x_data))
-    
-    # Set reasonable defaults if no range found
-    if min_x == float('inf'):
-        min_x, max_x = CONFIG["DEFAULT_THETA_MIN"], CONFIG["DEFAULT_THETA_MAX"]
-    
-    # Add padding
-    min_x = max(0, min_x - CONFIG["PADDING"])
-    max_x = max_x + CONFIG["PADDING"]
-    
-    return min_x, max_x
+        st.error(f"Error exporting figure: {str(e)}")
+        st.info("Try installing the kaleido package: `pip install kaleido`")
+        return None
 
 
 def find_label_position(x_data, y_data, is_custom_range, min_theta=None, max_theta=None):
@@ -447,6 +305,27 @@ def find_label_position(x_data, y_data, is_custom_range, min_theta=None, max_the
     return max_x, 0
 
 
+def get_data_range(files) -> Tuple[float, float]:
+    """Calculate the data range from all uploaded files."""
+    min_x, max_x = float('inf'), float('-inf')
+    
+    for file in files:
+        x_data, _ = read_xrd_data(file)
+        if x_data is not None and len(x_data) > 0:
+            min_x = min(min_x, np.min(x_data))
+            max_x = max(max_x, np.max(x_data))
+    
+    # Set reasonable defaults if no range found
+    if min_x == float('inf'):
+        min_x, max_x = CONFIG["DEFAULT_THETA_MIN"], CONFIG["DEFAULT_THETA_MAX"]
+    
+    # Add padding
+    min_x = max(0, min_x - CONFIG["PADDING"])
+    max_x = max_x + CONFIG["PADDING"]
+    
+    return min_x, max_x
+
+
 # ===== UI Components =====
 
 def render_sidebar_controls():
@@ -465,49 +344,23 @@ def render_sidebar_controls():
         plot_config['max_theta'] = None
         
         # Legend settings
-        st.subheader("Legend Settings")
+        st.subheader("Display Settings")
         plot_config['show_legend'] = st.checkbox("Show legend", value=True)
-        
-        if plot_config['show_legend'] and MATPLOTLIB_AVAILABLE:
-            legend_options = ["best", "upper right", "upper left", "lower left", "lower right",
-                             "right", "center left", "center right", "lower center", "upper center",
-                             "center", "outside"]
-            plot_config['legend_position'] = st.selectbox("Legend position", legend_options, index=0)
-            
-            # Special handling for "outside" position
-            if plot_config['legend_position'] == "outside":
-                plot_config['legend_position'] = "center left"
-                plot_config['legend_bbox_to_anchor'] = (1.05, 0.5)
-            else:
-                plot_config['legend_bbox_to_anchor'] = None
-        
-        # Plot style settings - only if matplotlib is available
-        if MATPLOTLIB_AVAILABLE:
-            st.subheader("Plot Style")
-            can_use_pub_style = SCIENCEPLOTS_AVAILABLE
-            plot_config['use_publication_style'] = st.checkbox(
-                "Use publication quality style", 
-                value=False, 
-                disabled=not can_use_pub_style,
-                help="Requires SciencePlots package" if not can_use_pub_style else None
-            )
-            
-            if plot_config['use_publication_style']:
-                plot_config['science_style'] = st.selectbox(
-                    "Science style",
-                    ["science", "ieee", "nature", "grid"],
-                    index=0
-                )
-                plot_config['use_latex'] = st.checkbox("Use LaTeX for text rendering", value=False)
+        plot_config['use_dark_theme'] = st.checkbox("Dark theme", value=False)
         
         # System status
         st.subheader("System Status")
-        if CONFIG["FALLBACK_MODE"]:
-            st.warning("Running in fallback mode - some features are limited")
-            
-        st.info(f"Matplotlib: {'Available' if MATPLOTLIB_AVAILABLE else 'Not Available'}")
-        st.info(f"SciPy: {'Available' if SCIPY_AVAILABLE else 'Not Available'}")
-        st.info(f"SciencePlots: {'Available' if SCIENCEPLOTS_AVAILABLE else 'Not Available'}")
+        st.info(f"SciPy (for smoothing): {'Available' if SCIPY_AVAILABLE else 'Not Available'}")
+        
+        # Help info
+        st.markdown("---")
+        st.markdown("""
+        **Tip:** Use the toolbar in the upper right of the plot to:
+        - Zoom in/out
+        - Pan
+        - Download as PNG
+        - Reset view
+        """)
     
     return plot_config
 
@@ -550,7 +403,10 @@ def render_file_controls(file, idx, use_custom_range, min_theta=None, max_theta=
                 key=f"offset_{idx}"
             )
         
-        file_config['color'] = st.color_picker("Color", key=f"color_{idx}")
+        # Use a color from the default palette or let user pick
+        default_color = CONFIG["COLORS"][idx % len(CONFIG["COLORS"])]
+        custom_color = st.color_picker("Color", default_color, key=f"color_{idx}")
+        file_config['color'] = custom_color
         
         # Apply smoothing if requested and available
         if SCIPY_AVAILABLE:
@@ -621,62 +477,32 @@ def render_file_controls(file, idx, use_custom_range, min_theta=None, max_theta=
     return original_data, processed_data, label_info
 
 
-def render_export_controls(processed_data, label_positions, plot_config):
-    """Render export controls for saving figures and data."""
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Export figure - only available with matplotlib
-        if MATPLOTLIB_AVAILABLE:
-            if st.button("Save Figure"):
-                # Get figure dimensions
-                width = st.sidebar.number_input("Width (inches)", value=8.0, min_value=1.0, max_value=20.0)
-                height = st.sidebar.number_input("Height (inches)", value=6.0, min_value=1.0, max_value=20.0)
-                
-                # Generate export figure
-                png_buf, pdf_buf = export_figure(
-                    processed_data,
-                    label_positions,
-                    plot_config,
-                    width,
-                    height
-                )
-                
-                # Offer downloads
-                if png_buf:
-                    st.download_button(
-                        label="Download PNG",
-                        data=png_buf,
-                        file_name="xrd_plot.png",
-                        mime="image/png"
-                    )
-                
-                if pdf_buf:
-                    st.download_button(
-                        label="Download PDF",
-                        data=pdf_buf,
-                        file_name="xrd_plot.pdf",
-                        mime="application/pdf"
-                    )
-                else:
-                    st.warning("PDF export failed. Try a different configuration.")
-        else:
-            st.warning("Figure export requires matplotlib which is not available")
-    
-    with col2:
-        # Export data - always available
-        if st.button("Export Data"):
-            for data in processed_data:
-                df = pd.DataFrame({
-                    '2θ': data['x'],
-                    'Intensity': data['y']
-                })
-                st.download_button(
-                    label=f"Download {data['label']}",
-                    data=df.to_csv(index=False),
-                    file_name=f"{data['label']}.csv",
-                    mime="text/csv"
-                )
+def render_export_controls(processed_data, fig):
+    """Render export controls for saving data."""
+    if st.button("Export Data"):
+        for data in processed_data:
+            df = pd.DataFrame({
+                '2θ': data['x'],
+                'Intensity': data['y']
+            })
+            st.download_button(
+                label=f"Download {data['label']}",
+                data=df.to_csv(index=False),
+                file_name=f"{data['label']}.csv",
+                mime="text/csv"
+            )
+        
+        # Offer HTML export of the interactive plot
+        buffer = BytesIO()
+        fig.write_html(buffer)
+        buffer.seek(0)
+        
+        st.download_button(
+            label="Download Interactive Plot (HTML)",
+            data=buffer,
+            file_name="xrd_plot.html",
+            mime="text/html"
+        )
 
 
 def render_tutorial():
@@ -694,9 +520,15 @@ def render_tutorial():
            - Position labels precisely where you want them
         3. **Global Settings**: Use the sidebar to control:
            - 2θ range to display
-           - Legend position and visibility
-           - Publication-quality styling
-        4. **Export**: Save your processed data or download publication-ready figures
+           - Legend visibility
+           - Dark/light theme
+        4. **Interactive Features**: The plot is fully interactive:
+           - Hover over data points to see exact values
+           - Zoom in/out with mouse wheel or toolbar
+           - Pan by dragging
+           - Double-click to reset view
+           - Click on legend items to hide/show traces
+        5. **Export**: Save your processed data or the interactive plot
         
         Try it now by uploading your XRD data files!
         """)
@@ -707,13 +539,6 @@ def render_tutorial():
 def main():
     st.title("XRD Data Plotter")
     st.write("Upload XRD files to visualize, compare, and analyze X-ray diffraction patterns")
-    
-    # Display matplotlib status alert if in fallback mode
-    if CONFIG["FALLBACK_MODE"]:
-        st.warning(
-            "Running in compatibility mode: matplotlib is not available. "
-            "Basic plotting functionality is enabled, but advanced features are limited."
-        )
     
     # File uploader
     uploaded_files = st.file_uploader(
@@ -767,21 +592,14 @@ def main():
         st.error("No valid data files were uploaded. Please check your files.")
         return
     
-    # Apply plot styles if matplotlib is available
-    if MATPLOTLIB_AVAILABLE:
-        setup_plot_style(
-            plot_config.get('use_publication_style', False),
-            plot_config.get('science_style', 'science'),
-            plot_config.get('use_latex', False)
-        )
+    # Create interactive plotly figure
+    fig = create_interactive_plot(all_processed_data, all_label_positions, plot_config)
     
-    # Create and display the plot
-    fig = create_figure_with_data(all_processed_data, all_label_positions, plot_config)
-    if MATPLOTLIB_AVAILABLE and fig:
-        st.pyplot(fig)
+    # Display plot - use_container_width makes it responsive
+    st.plotly_chart(fig, use_container_width=True, config={'responsive': True})
     
     # Export controls
-    render_export_controls(all_processed_data, all_label_positions, plot_config)
+    render_export_controls(all_processed_data, fig)
 
 
 # Add footer with attribution
