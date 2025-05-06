@@ -1,10 +1,8 @@
 import streamlit as st
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
 import re
 import warnings
-from scipy.signal import savgol_filter
 from io import BytesIO
 from typing import Tuple, List, Dict, Optional, Any, Union
 
@@ -22,10 +20,33 @@ CONFIG = {
     "PADDING": 5,
     "SUPPORTED_FORMATS": ['txt', 'csv', 'dat', 'xy'],
     "DEFAULT_DPI": 300,
-    "LABEL_OFFSET_PERCENT": 0.05  # Position labels 5% from the end of visible range
+    "LABEL_OFFSET_PERCENT": 0.05,  # Position labels 5% from the end of visible range
+    "FALLBACK_MODE": False
 }
 
-# Try importing optional dependencies
+# Try importing optional dependencies with fallbacks
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # Force Agg backend which works better in headless environments
+    import matplotlib.pyplot as plt
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:
+    MATPLOTLIB_AVAILABLE = False
+    CONFIG["FALLBACK_MODE"] = True
+    warnings.warn("Matplotlib not available. Using simplified plotting mode.")
+
+try:
+    from scipy.signal import savgol_filter
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+    warnings.warn("SciPy not available. Smoothing features will be disabled.")
+    
+    # Define a dummy savgol_filter function for fallback
+    def savgol_filter(data, window_length, polyorder, **kwargs):
+        """Dummy function when scipy is not available."""
+        return data
+
 try:
     import scienceplots
     SCIENCEPLOTS_AVAILABLE = True
@@ -122,6 +143,10 @@ def normalize_data(y_data: np.ndarray) -> np.ndarray:
 
 def apply_smooth(y_data: np.ndarray, window_size: int) -> np.ndarray:
     """Apply Savitzky-Golay smoothing with error handling."""
+    if not SCIPY_AVAILABLE:
+        st.warning("Smoothing unavailable - SciPy not installed")
+        return y_data
+        
     if window_size % 2 == 0:
         window_size += 1  # Ensure odd window size
         
@@ -142,6 +167,9 @@ def apply_smooth(y_data: np.ndarray, window_size: int) -> np.ndarray:
 
 def setup_plot_style(use_publication_style: bool, style_name: str, use_latex: bool) -> None:
     """Configure plot styling based on user preferences."""
+    if not MATPLOTLIB_AVAILABLE:
+        return
+        
     if use_publication_style and SCIENCEPLOTS_AVAILABLE:
         try:
             plt.style.use(['science', style_name])
@@ -160,8 +188,11 @@ def create_figure_with_data(
     processed_data: List[Dict[str, Any]],
     label_positions: List[Dict[str, Any]],
     plot_config: Dict[str, Any]
-) -> plt.Figure:
+) -> Any:
     """Create and configure a matplotlib figure with the dataset."""
+    if not MATPLOTLIB_AVAILABLE:
+        return create_fallback_chart(processed_data, label_positions, plot_config)
+        
     fig, ax = plt.subplots(figsize=(10, 6))
     
     # Plot each dataset
@@ -216,83 +247,143 @@ def create_figure_with_data(
     return fig
 
 
+def create_fallback_chart(
+    processed_data: List[Dict[str, Any]],
+    label_positions: List[Dict[str, Any]],
+    plot_config: Dict[str, Any]
+) -> None:
+    """Create a chart using Streamlit's native charting when matplotlib is unavailable."""
+    # Convert the data into a format suitable for Streamlit
+    chart_data = []
+    
+    for data in processed_data:
+        if plot_config.get('use_custom_range', False):
+            min_theta = plot_config['min_theta']
+            max_theta = plot_config['max_theta']
+            mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
+            x = data['x'][mask]
+            y = data['y'][mask]
+        else:
+            x = data['x']
+            y = data['y']
+            
+        # Create DataFrame for this dataset
+        df = pd.DataFrame({
+            '2θ': x,
+            data['label']: y
+        })
+        chart_data.append((df, data['color']))
+    
+    # Display using Streamlit's line chart
+    st.subheader("XRD Data Plot (Fallback Mode)")
+    st.write("*Note: Using simplified plotting due to matplotlib unavailability.*")
+    
+    # Create a chart for each dataset (Streamlit doesn't support multiple lines with different colors easily)
+    for df, color in chart_data:
+        st.line_chart(df.set_index('2θ'), use_container_width=True)
+    
+    # Show label positions in a table
+    if any(label.get('show', False) for label in label_positions):
+        st.subheader("Label Positions")
+        labels_df = pd.DataFrame([
+            {
+                "Label": label['text'],
+                "X Position (2θ)": label['x'],
+                "Y Position (Intensity)": label['y']
+            }
+            for label in label_positions if label.get('show', False)
+        ])
+        if not labels_df.empty:
+            st.dataframe(labels_df)
+    
+    # No return needed as we're directly rendering to Streamlit
+
+
 def export_figure(
     processed_data: List[Dict[str, Any]],
     label_positions: List[Dict[str, Any]],
     plot_config: Dict[str, Any],
     width: float,
     height: float
-) -> Tuple[BytesIO, Optional[BytesIO]]:
+) -> Tuple[Optional[BytesIO], Optional[BytesIO]]:
     """Create high-quality figure for export and return buffers."""
-    # Create figure with settings for export
-    save_fig = plt.figure(figsize=(width, height))
-    save_ax = save_fig.add_subplot(111)
-    
-    # Plot each dataset
-    for data in processed_data:
-        if plot_config.get('use_custom_range', False):
-            min_theta = plot_config['min_theta']
-            max_theta = plot_config['max_theta']
-            mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
-            x_plot = data['x'][mask]
-            y_plot = data['y'][mask]
-        else:
-            x_plot = data['x']
-            y_plot = data['y']
+    if not MATPLOTLIB_AVAILABLE:
+        st.error("Export functionality not available without matplotlib")
+        return None, None
         
-        save_ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
-    
-    # Add custom labels
-    for label_info in label_positions:
-        if label_info.get('show', False):
-            save_ax.text(
-                label_info['x'],
-                label_info['y'],
-                label_info['text'],
-                color=label_info['color'],
-                ha='right',
-                va='center',
-                fontweight='bold'
-            )
-    
-    # Configure axes
-    if plot_config.get('use_latex', False):
-        save_ax.set_xlabel(r"$2\theta$ (degrees)")
-    else:
-        save_ax.set_xlabel("2$\theta$ (degrees)")
-    
-    save_ax.set_ylabel("Intensity (a.u.)")
-    
-    # Set axis limits if needed
-    if plot_config.get('use_custom_range', False):
-        save_ax.set_xlim(plot_config['min_theta'], plot_config['max_theta'])
-    
-    save_ax.grid(True, alpha=0.3)
-    
-    # Add legend if requested
-    if plot_config.get('show_legend', True):
-        bbox_to_anchor = plot_config.get('legend_bbox_to_anchor')
-        if bbox_to_anchor:
-            save_ax.legend(loc=plot_config['legend_position'], bbox_to_anchor=bbox_to_anchor)
-        else:
-            save_ax.legend(loc=plot_config['legend_position'])
-    
-    # Create PNG buffer
-    png_buf = BytesIO()
-    save_fig.savefig(png_buf, format="png", dpi=CONFIG["DEFAULT_DPI"], bbox_inches="tight")
-    png_buf.seek(0)
-    
-    # Try PDF export
-    pdf_buf = None
     try:
-        pdf_buf = BytesIO()
-        save_fig.savefig(pdf_buf, format="pdf", bbox_inches="tight")
-        pdf_buf.seek(0)
-    except Exception:
-        pass
+        # Create figure with settings for export
+        save_fig = plt.figure(figsize=(width, height))
+        save_ax = save_fig.add_subplot(111)
         
-    plt.close(save_fig)
-    return png_buf, pdf_buf
+        # Plot each dataset
+        for data in processed_data:
+            if plot_config.get('use_custom_range', False):
+                min_theta = plot_config['min_theta']
+                max_theta = plot_config['max_theta']
+                mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
+                x_plot = data['x'][mask]
+                y_plot = data['y'][mask]
+            else:
+                x_plot = data['x']
+                y_plot = data['y']
+            
+            save_ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
+        
+        # Add custom labels
+        for label_info in label_positions:
+            if label_info.get('show', False):
+                save_ax.text(
+                    label_info['x'],
+                    label_info['y'],
+                    label_info['text'],
+                    color=label_info['color'],
+                    ha='right',
+                    va='center',
+                    fontweight='bold'
+                )
+        
+        # Configure axes
+        if plot_config.get('use_latex', False):
+            save_ax.set_xlabel(r"$2\theta$ (degrees)")
+        else:
+            save_ax.set_xlabel("2$\theta$ (degrees)")
+        
+        save_ax.set_ylabel("Intensity (a.u.)")
+        
+        # Set axis limits if needed
+        if plot_config.get('use_custom_range', False):
+            save_ax.set_xlim(plot_config['min_theta'], plot_config['max_theta'])
+        
+        save_ax.grid(True, alpha=0.3)
+        
+        # Add legend if requested
+        if plot_config.get('show_legend', True):
+            bbox_to_anchor = plot_config.get('legend_bbox_to_anchor')
+            if bbox_to_anchor:
+                save_ax.legend(loc=plot_config['legend_position'], bbox_to_anchor=bbox_to_anchor)
+            else:
+                save_ax.legend(loc=plot_config['legend_position'])
+        
+        # Create PNG buffer
+        png_buf = BytesIO()
+        save_fig.savefig(png_buf, format="png", dpi=CONFIG["DEFAULT_DPI"], bbox_inches="tight")
+        png_buf.seek(0)
+        
+        # Try PDF export
+        pdf_buf = None
+        try:
+            pdf_buf = BytesIO()
+            save_fig.savefig(pdf_buf, format="pdf", bbox_inches="tight")
+            pdf_buf.seek(0)
+        except Exception:
+            pass
+            
+        plt.close(save_fig)
+        return png_buf, pdf_buf
+    except Exception as e:
+        st.error(f"Error creating export: {str(e)}")
+        return None, None
 
 
 def get_data_range(files) -> Tuple[float, float]:
@@ -377,7 +468,7 @@ def render_sidebar_controls():
         st.subheader("Legend Settings")
         plot_config['show_legend'] = st.checkbox("Show legend", value=True)
         
-        if plot_config['show_legend']:
+        if plot_config['show_legend'] and MATPLOTLIB_AVAILABLE:
             legend_options = ["best", "upper right", "upper left", "lower left", "lower right",
                              "right", "center left", "center right", "lower center", "upper center",
                              "center", "outside"]
@@ -390,23 +481,33 @@ def render_sidebar_controls():
             else:
                 plot_config['legend_bbox_to_anchor'] = None
         
-        # Plot style settings
-        st.subheader("Plot Style")
-        can_use_pub_style = SCIENCEPLOTS_AVAILABLE
-        plot_config['use_publication_style'] = st.checkbox(
-            "Use publication quality style", 
-            value=False, 
-            disabled=not can_use_pub_style,
-            help="Requires SciencePlots package" if not can_use_pub_style else None
-        )
-        
-        if plot_config['use_publication_style']:
-            plot_config['science_style'] = st.selectbox(
-                "Science style",
-                ["science", "ieee", "nature", "grid"],
-                index=0
+        # Plot style settings - only if matplotlib is available
+        if MATPLOTLIB_AVAILABLE:
+            st.subheader("Plot Style")
+            can_use_pub_style = SCIENCEPLOTS_AVAILABLE
+            plot_config['use_publication_style'] = st.checkbox(
+                "Use publication quality style", 
+                value=False, 
+                disabled=not can_use_pub_style,
+                help="Requires SciencePlots package" if not can_use_pub_style else None
             )
-            plot_config['use_latex'] = st.checkbox("Use LaTeX for text rendering", value=False)
+            
+            if plot_config['use_publication_style']:
+                plot_config['science_style'] = st.selectbox(
+                    "Science style",
+                    ["science", "ieee", "nature", "grid"],
+                    index=0
+                )
+                plot_config['use_latex'] = st.checkbox("Use LaTeX for text rendering", value=False)
+        
+        # System status
+        st.subheader("System Status")
+        if CONFIG["FALLBACK_MODE"]:
+            st.warning("Running in fallback mode - some features are limited")
+            
+        st.info(f"Matplotlib: {'Available' if MATPLOTLIB_AVAILABLE else 'Not Available'}")
+        st.info(f"SciPy: {'Available' if SCIPY_AVAILABLE else 'Not Available'}")
+        st.info(f"SciencePlots: {'Available' if SCIENCEPLOTS_AVAILABLE else 'Not Available'}")
     
     return plot_config
 
@@ -451,15 +552,18 @@ def render_file_controls(file, idx, use_custom_range, min_theta=None, max_theta=
         
         file_config['color'] = st.color_picker("Color", key=f"color_{idx}")
         
-        # Apply smoothing if requested
-        file_config['apply_smooth'] = st.checkbox("Apply smoothing", key=f"smooth_{idx}")
-        if file_config['apply_smooth']:
-            file_config['window_size'] = st.slider(
-                "Smoothing window", 
-                3, 51, 5, 2, 
-                key=f"window_{idx}"
-            )
-            y_processed = apply_smooth(y_data.copy(), file_config['window_size'])
+        # Apply smoothing if requested and available
+        if SCIPY_AVAILABLE:
+            file_config['apply_smooth'] = st.checkbox("Apply smoothing", key=f"smooth_{idx}")
+            if file_config['apply_smooth']:
+                file_config['window_size'] = st.slider(
+                    "Smoothing window", 
+                    3, 51, 5, 2, 
+                    key=f"window_{idx}"
+                )
+                y_processed = apply_smooth(y_data.copy(), file_config['window_size'])
+            else:
+                y_processed = y_data.copy()
         else:
             y_processed = y_data.copy()
         
@@ -522,39 +626,45 @@ def render_export_controls(processed_data, label_positions, plot_config):
     col1, col2 = st.columns(2)
     
     with col1:
-        if st.button("Save Figure"):
-            # Get figure dimensions
-            width = st.sidebar.number_input("Width (inches)", value=8.0, min_value=1.0, max_value=20.0)
-            height = st.sidebar.number_input("Height (inches)", value=6.0, min_value=1.0, max_value=20.0)
-            
-            # Generate export figure
-            png_buf, pdf_buf = export_figure(
-                processed_data,
-                label_positions,
-                plot_config,
-                width,
-                height
-            )
-            
-            # Offer downloads
-            st.download_button(
-                label="Download PNG",
-                data=png_buf,
-                file_name="xrd_plot.png",
-                mime="image/png"
-            )
-            
-            if pdf_buf:
-                st.download_button(
-                    label="Download PDF",
-                    data=pdf_buf,
-                    file_name="xrd_plot.pdf",
-                    mime="application/pdf"
+        # Export figure - only available with matplotlib
+        if MATPLOTLIB_AVAILABLE:
+            if st.button("Save Figure"):
+                # Get figure dimensions
+                width = st.sidebar.number_input("Width (inches)", value=8.0, min_value=1.0, max_value=20.0)
+                height = st.sidebar.number_input("Height (inches)", value=6.0, min_value=1.0, max_value=20.0)
+                
+                # Generate export figure
+                png_buf, pdf_buf = export_figure(
+                    processed_data,
+                    label_positions,
+                    plot_config,
+                    width,
+                    height
                 )
-            else:
-                st.warning("PDF export failed. Try a different configuration.")
+                
+                # Offer downloads
+                if png_buf:
+                    st.download_button(
+                        label="Download PNG",
+                        data=png_buf,
+                        file_name="xrd_plot.png",
+                        mime="image/png"
+                    )
+                
+                if pdf_buf:
+                    st.download_button(
+                        label="Download PDF",
+                        data=pdf_buf,
+                        file_name="xrd_plot.pdf",
+                        mime="application/pdf"
+                    )
+                else:
+                    st.warning("PDF export failed. Try a different configuration.")
+        else:
+            st.warning("Figure export requires matplotlib which is not available")
     
     with col2:
+        # Export data - always available
         if st.button("Export Data"):
             for data in processed_data:
                 df = pd.DataFrame({
@@ -597,6 +707,13 @@ def render_tutorial():
 def main():
     st.title("XRD Data Plotter")
     st.write("Upload XRD files to visualize, compare, and analyze X-ray diffraction patterns")
+    
+    # Display matplotlib status alert if in fallback mode
+    if CONFIG["FALLBACK_MODE"]:
+        st.warning(
+            "Running in compatibility mode: matplotlib is not available. "
+            "Basic plotting functionality is enabled, but advanced features are limited."
+        )
     
     # File uploader
     uploaded_files = st.file_uploader(
@@ -650,16 +767,18 @@ def main():
         st.error("No valid data files were uploaded. Please check your files.")
         return
     
-    # Apply plot styles
-    setup_plot_style(
-        plot_config.get('use_publication_style', False),
-        plot_config.get('science_style', 'science'),
-        plot_config.get('use_latex', False)
-    )
+    # Apply plot styles if matplotlib is available
+    if MATPLOTLIB_AVAILABLE:
+        setup_plot_style(
+            plot_config.get('use_publication_style', False),
+            plot_config.get('science_style', 'science'),
+            plot_config.get('use_latex', False)
+        )
     
     # Create and display the plot
     fig = create_figure_with_data(all_processed_data, all_label_positions, plot_config)
-    st.pyplot(fig)
+    if MATPLOTLIB_AVAILABLE and fig:
+        st.pyplot(fig)
     
     # Export controls
     render_export_controls(all_processed_data, all_label_positions, plot_config)
@@ -673,4 +792,8 @@ Made with [Streamlit](https://streamlit.io) • [GitHub Repository](https://gith
 
 # Run the application
 if __name__ == "__main__":
-    main() 
+    try:
+        main()
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        st.info("Please report this issue to the repository maintainers.") 
