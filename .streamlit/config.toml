@@ -1,14 +1,16 @@
 [server]
 enableCORS = false
 enableXsrfProtection = false
+enableStaticServing = true
+headless = true
 
 [browser]
 gatherUsageStats = false
 
 [theme]
-primaryColor = "#4d8bf9"
-backgroundColor = "#f0f2f6"
-secondaryBackgroundColor = "#ffffff"
+primaryColor = "#FF4B4B"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F0F2F6"
 textColor = "#262730"
 font = "sans serif"
 
