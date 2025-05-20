@@ -10,5 +10,6 @@ packaging==23.1
 kaleido==0.2.1
 # Plotly dependencies
 packaging==23.2
-# Optional dependencies
-scienceplots 
+# Science plotting dependencies
+matplotlib==3.7.2
+scienceplots==2.1.0 

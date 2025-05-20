@@ -10,7 +10,8 @@ A production-ready, interactive X-ray Diffraction (XRD) data visualization appli
 - **Interactive Visualization**: Zoomable, pannable plots with tooltips and data exploration
 - **Data Processing**: Normalize, smooth, and adjust spectral data
 - **Customization**: Modify colors, labels, and offsets for publication-ready visualization
-- **Export**: Download processed data or interactive HTML plots
+- **Publication-Quality Export**: Generate high-resolution plots using SciencePlots styles
+- **Export Options**: Download processed data, interactive HTML plots, or high-DPI PNG images
 - **Responsive Design**: Works on mobile, tablet, and desktop browsers
 
 ## Live Demo

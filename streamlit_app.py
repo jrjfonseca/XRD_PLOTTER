@@ -25,6 +25,8 @@ CONFIG = {
 # Safely import optional dependencies
 SCIPY_AVAILABLE = False
 PLOTLY_AVAILABLE = False
+MATPLOTLIB_AVAILABLE = False
+SCIENCEPLOTS_AVAILABLE = False
 
 try:
     from scipy.signal import savgol_filter
@@ -50,6 +52,21 @@ except ImportError:
         "#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A", 
         "#19D3F3", "#FF6692", "#B6E880", "#FF97FF", "#FECB52"
     ]
+
+# Import matplotlib and scienceplots for publication quality plots
+try:
+    import matplotlib.pyplot as plt
+    import matplotlib
+    MATPLOTLIB_AVAILABLE = True
+    
+    try:
+        import scienceplots
+        SCIENCEPLOTS_AVAILABLE = True
+    except ImportError:
+        warnings.warn("SciencePlots not available. Publication-quality plots will be limited.")
+        
+except ImportError:
+    warnings.warn("Matplotlib not available. Publication-quality plots will be disabled.")
 
 
 # ===== DATA PROCESSING FUNCTIONS =====
@@ -380,6 +397,89 @@ def create_fallback_plot(
         st.dataframe(label_df)
 
 
+def create_publication_plot(
+    processed_data: List[Dict[str, Any]],
+    label_positions: List[Dict[str, Any]],
+    plot_config: Dict[str, Any],
+    dpi: int = 300
+) -> Optional[BytesIO]:
+    """
+    Create a publication-quality plot using SciencePlots and matplotlib.
+    
+    Args:
+        processed_data: List of processed datasets
+        label_positions: List of label position information
+        plot_config: Dictionary of plot configuration options
+        dpi: Resolution of the output image (dots per inch)
+        
+    Returns:
+        BytesIO buffer containing the PNG image or None if matplotlib is unavailable
+    """
+    if not MATPLOTLIB_AVAILABLE:
+        return None
+    
+    # Set the style context - use SciencePlots if available
+    if SCIENCEPLOTS_AVAILABLE:
+        plt.style.use(['science', 'no-latex', 'ieee'])
+    
+    # Create figure and axes
+    fig, ax = plt.subplots(figsize=(8, 6), dpi=dpi)
+    
+    # Add each dataset as a line
+    for i, data in enumerate(processed_data):
+        # Apply custom range if needed
+        if plot_config.get('use_custom_range', False):
+            min_theta = plot_config['min_theta']
+            max_theta = plot_config['max_theta']
+            mask = (data['x'] >= min_theta) & (data['x'] <= max_theta)
+            x_plot = data['x'][mask]
+            y_plot = data['y'][mask]
+        else:
+            x_plot = data['x']
+            y_plot = data['y']
+        
+        # Plot the line
+        ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
+    
+    # Add custom labels as text annotations
+    for label_info in label_positions:
+        if label_info.get('show', False):
+            ax.text(
+                label_info['x'], 
+                label_info['y'], 
+                label_info['text'],
+                color=label_info['color'],
+                fontsize=10,
+                ha='right',
+                va='center'
+            )
+    
+    # Configure axis labels and layout
+    ax.set_xlabel(r'2$\theta$ (degrees)')
+    ax.set_ylabel('Intensity (a.u.)')
+    
+    # Set axis limits if custom range is specified
+    if plot_config.get('use_custom_range', False):
+        ax.set_xlim(plot_config['min_theta'], plot_config['max_theta'])
+    
+    # Add legend if requested
+    if plot_config.get('show_legend', True):
+        ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.05), ncol=3, frameon=False)
+    
+    # Apply dark theme if requested
+    if plot_config.get('use_dark_theme', False):
+        plt.style.use('dark_background')
+    
+    # Save to a buffer
+    buffer = BytesIO()
+    plt.savefig(buffer, format='png', dpi=dpi, bbox_inches='tight')
+    plt.close(fig)
+    
+    # Reset the buffer position to the beginning
+    buffer.seek(0)
+    return buffer
+
+
 # ===== UI COMPONENTS =====
 
 def render_sidebar_controls():
@@ -406,6 +506,8 @@ def render_sidebar_controls():
         st.subheader("System Status")
         st.info(f"SciPy (for smoothing): {'Available' if SCIPY_AVAILABLE else 'Not Available'}")
         st.info(f"Plotly (for interactive plots): {'Available' if PLOTLY_AVAILABLE else 'Not Available'}")
+        st.info(f"Matplotlib: {'Available' if MATPLOTLIB_AVAILABLE else 'Not Available'}")
+        st.info(f"SciencePlots (for publication plots): {'Available' if SCIENCEPLOTS_AVAILABLE else 'Not Available'}")
         
         # Help info
         st.markdown("---")
@@ -415,6 +517,10 @@ def render_sidebar_controls():
         - Pan
         - Download as PNG
         - Reset view
+        
+        **Publication Export:**
+        - Find publication-quality export options at the bottom of the page
+        - Choose resolution and style for high-quality figures
         """)
     
     return plot_config
@@ -532,21 +638,25 @@ def render_file_controls(file, idx, use_custom_range, min_theta=None, max_theta=
     return original_data, processed_data, label_info
 
 
-def render_export_controls(processed_data, fig=None):
+def render_export_controls(processed_data, fig=None, label_positions=None, plot_config=None):
     """Render export controls for saving data."""
-    if st.button("Export Data"):
-        for data in processed_data:
-            df = pd.DataFrame({
-                '2θ': data['x'],
-                'Intensity': data['y']
-            })
-            st.download_button(
-                label=f"Download {data['label']}",
-                data=df.to_csv(index=False),
-                file_name=f"{data['label']}.csv",
-                mime="text/csv"
-            )
-        
+    export_col1, export_col2 = st.columns(2)
+    
+    with export_col1:
+        if st.button("Export Data"):
+            for data in processed_data:
+                df = pd.DataFrame({
+                    '2θ': data['x'],
+                    'Intensity': data['y']
+                })
+                st.download_button(
+                    label=f"Download {data['label']}",
+                    data=df.to_csv(index=False),
+                    file_name=f"{data['label']}.csv",
+                    mime="text/csv"
+                )
+    
+    with export_col2:
         # Offer HTML export of the interactive plot if plotly is available
         if PLOTLY_AVAILABLE and fig is not None:
             try:
@@ -562,6 +672,58 @@ def render_export_controls(processed_data, fig=None):
                 )
             except Exception as e:
                 st.error(f"Error exporting HTML: {str(e)}")
+    
+    # Publication-quality plots section
+    if MATPLOTLIB_AVAILABLE and processed_data and label_positions and plot_config:
+        st.subheader("Publication-Quality Export")
+        
+        pub_col1, pub_col2 = st.columns(2)
+        
+        # DPI selector for high-resolution export
+        with pub_col1:
+            dpi = st.select_slider(
+                "Resolution (DPI)", 
+                options=[100, 150, 300, 600, 1200],
+                value=300
+            )
+        
+        # SciencePlots style selector
+        with pub_col2:
+            style_options = ['science', 'ieee', 'nature', 'science', 'scatter']
+            if SCIENCEPLOTS_AVAILABLE:
+                style = st.selectbox("Plot Style", options=style_options, index=0)
+            else:
+                st.info("SciencePlots not available - using default matplotlib style")
+                style = 'default'
+        
+        # Generate publication-quality plot
+        if st.button("Generate Publication-Quality Plot"):
+            with st.spinner("Generating high-quality plot..."):
+                # Create and save the publication plot
+                try:
+                    # Set the style before creating the plot
+                    if SCIENCEPLOTS_AVAILABLE and style != 'default':
+                        with plt.style.context([style, 'no-latex']):
+                            buffer = create_publication_plot(processed_data, label_positions, plot_config, dpi)
+                    else:
+                        buffer = create_publication_plot(processed_data, label_positions, plot_config, dpi)
+                    
+                    if buffer:
+                        # Preview the plot
+                        st.image(buffer, caption="Publication-Quality Preview")
+                        
+                        # Offer download
+                        st.download_button(
+                            label="Download High-Resolution PNG",
+                            data=buffer,
+                            file_name="xrd_publication_plot.png",
+                            mime="image/png"
+                        )
+                    else:
+                        st.error("Failed to generate publication-quality plot")
+                except Exception as e:
+                    st.error(f"Error generating publication plot: {str(e)}")
+                    st.info("Try installing matplotlib and scienceplots for publication-quality export")
 
 
 def render_tutorial():
@@ -587,7 +749,11 @@ def render_tutorial():
            - Pan by dragging
            - Double-click to reset view
            - Click on legend items to hide/show traces
-        5. **Export**: Save your processed data or the interactive plot
+        5. **Export Options**: 
+           - Download processed data as CSV
+           - Save interactive plot as HTML
+           - Generate publication-quality figures using SciencePlots styles
+           - Choose resolution (DPI) for high-quality PNG export
         
         Try it now by uploading your XRD data files!
         """)
@@ -661,10 +827,10 @@ def main():
             st.plotly_chart(fig, use_container_width=True, config={'responsive': True})
             
             # Export controls
-            render_export_controls(all_processed_data, fig)
+            render_export_controls(all_processed_data, fig, all_label_positions, plot_config)
         else:
             # Fallback mode doesn't return a figure object
-            render_export_controls(all_processed_data)
+            render_export_controls(all_processed_data, None, all_label_positions, plot_config)
             
     except Exception as e:
         st.error(f"An unexpected error occurred: {str(e)}")
