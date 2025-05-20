@@ -62,11 +62,15 @@ try:
     try:
         import scienceplots
         SCIENCEPLOTS_AVAILABLE = True
-    except ImportError:
-        warnings.warn("SciencePlots not available. Publication-quality plots will be limited.")
+    except Exception as e:
+        SCIENCEPLOTS_AVAILABLE = False
+        scienceplots_error = str(e)
+        warnings.warn(f"SciencePlots error: {scienceplots_error}")
         
-except ImportError:
-    warnings.warn("Matplotlib not available. Publication-quality plots will be disabled.")
+except Exception as e:
+    MATPLOTLIB_AVAILABLE = False
+    matplotlib_error = str(e)
+    warnings.warn(f"Matplotlib error: {matplotlib_error}")
 
 
 # ===== DATA PROCESSING FUNCTIONS =====
@@ -438,8 +442,8 @@ def create_publication_plot(
             x_plot = data['x']
             y_plot = data['y']
         
-        # Plot the line
-        ax.plot(x_plot, y_plot, label=data['label'], color=data['color'])
+        # Plot the line (always using solid line style)
+        ax.plot(x_plot, y_plot, label=data['label'], color=data['color'], linestyle='-', linewidth=1.5)
     
     # Add custom labels as text annotations
     for label_info in label_positions:
@@ -506,8 +510,24 @@ def render_sidebar_controls():
         st.subheader("System Status")
         st.info(f"SciPy (for smoothing): {'Available' if SCIPY_AVAILABLE else 'Not Available'}")
         st.info(f"Plotly (for interactive plots): {'Available' if PLOTLY_AVAILABLE else 'Not Available'}")
-        st.info(f"Matplotlib: {'Available' if MATPLOTLIB_AVAILABLE else 'Not Available'}")
-        st.info(f"SciencePlots (for publication plots): {'Available' if SCIENCEPLOTS_AVAILABLE else 'Not Available'}")
+        
+        # Display matplotlib status with error if available
+        if MATPLOTLIB_AVAILABLE:
+            st.info("Matplotlib: Available")
+        else:
+            st.error("Matplotlib: Not Available")
+            if 'matplotlib_error' in globals():
+                with st.expander("Matplotlib Error Details"):
+                    st.code(matplotlib_error)
+        
+        # Display scienceplots status with error if available
+        if SCIENCEPLOTS_AVAILABLE:
+            st.info("SciencePlots (for publication plots): Available")
+        else:
+            st.error("SciencePlots (for publication plots): Not Available")
+            if 'scienceplots_error' in globals():
+                with st.expander("SciencePlots Error Details"):
+                    st.code(scienceplots_error)
         
         # Help info
         st.markdown("---")
@@ -757,7 +777,7 @@ def render_tutorial():
         
         Try it now by uploading your XRD data files!
         """)
-
+        
 
 # ===== MAIN APPLICATION =====
 
@@ -841,7 +861,7 @@ def main():
 st.markdown("""
 ---
 Made with [Streamlit](https://streamlit.io) • [GitHub Repository](https://github.com/jrjfonseca/XRD_PLOTTER)
-""")
+""") 
 
 # Run the application
 if __name__ == "__main__":
