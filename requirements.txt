@@ -12,4 +12,7 @@ kaleido==0.2.1
 packaging==23.2
 # Science plotting dependencies
 matplotlib==3.7.2
-scienceplots==2.1.0 
+# SciencePlots with specific version and dependencies
+SciencePlots==2.1.0
+cycler>=0.10.0
+pyparsing>=2.0.1 
