@@ -5,7 +5,6 @@ plotly==5.18.0
 scipy>=1.11.0
 # Core plotly dependencies to ensure compatibility
 tenacity==8.2.3
-packaging==23.1
 # Optional for plotly image export
 kaleido==0.2.1
 # Plotly dependencies
